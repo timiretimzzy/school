@@ -1,0 +1,19 @@
+name: Deploy GitHub Pages
+on: {push: {branches: [main]}, workflow_dispatch: {}}
+permissions: {contents: read, pages: write, id-token: write}
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: {name: github-pages}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create public config
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        run: echo "window.EDUSTACK_CONFIG={SUPABASE_URL:'$SUPABASE_URL',SUPABASE_ANON_KEY:'$SUPABASE_ANON_KEY'};" > config.js
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with: {path: .}
+      - id: deployment
+        uses: actions/deploy-pages@v4

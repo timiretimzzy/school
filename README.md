@@ -1,15 +1,15 @@
-# EduStack White-Label School Platform Prototype
+# EduStack Platform
 
-**Owned and developed by FiscalStack Solutions**
+Commercial multi-tenant, white-label school operating system by FiscalStack Solutions.
 
-This repository is a static, GitHub Pages-ready demonstration of the proposed multi-tenant white-label school management platform. It deliberately contains no fixed school identity.
+## Architecture
+Static frontend (GitHub Pages compatible) + Supabase Auth/PostgreSQL/RLS.
 
-## Run
-Open `index.html` locally or deploy the repository to GitHub Pages.
+## Start
+1. Create Supabase project.
+2. Run `supabase/schema.sql`.
+3. Copy `config.example.js` to `config.js` for local testing.
+4. Add `SUPABASE_URL` and `SUPABASE_ANON_KEY` as GitHub secrets for Pages deployment.
+5. Read `PRODUCT_MASTER.md` and `SETUP_GUIDE.md`.
 
-## Demo purpose
-The prototype demonstrates the most important commercial concept: a FiscalStack Product Administrator can onboard a school, configure its name, motto, domain, colours and modules, and preview a personalised school portal.
-
-Data is stored in browser `localStorage`. This is for demonstration only and is not a production database.
-
-See `PRODUCT_HANDOVER.md` for the complete product history, architecture, completed work and future roadmap.
+No localStorage is used as the application database.
