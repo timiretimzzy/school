@@ -2,16 +2,36 @@
 
 ## Current state
 
-EduStack is a static HTML/CSS/JavaScript GitHub Pages prototype. It has a Supabase client integration point, a tenant list, and a school onboarding form. The original schema covered tenants, branding, memberships, academics, students, attendance, results, finance, announcements, and audit logs.
+EduStack is a static HTML/CSS/ES-modules frontend (GitHub Pages compatible)
+backed by Supabase Auth/PostgreSQL/RLS and three Edge Functions
+(`create-tenant`, `invite-user`, `accept-invitation`). It implements a
+complete vertical slice: platform admin onboarding through school admin
+setup, teacher attendance/assessments, and student/parent portals with
+applied white-label branding. See `README.md` for the current feature list
+and `docs/TESTING.md` for the acceptance test plan.
 
 ## Findings
 
-- **Works:** responsive shell, neutral FiscalStack platform presentation, publishable-key configuration, basic tenant list and branding fields.
-- **Partial:** authentication was not required; tenant selection and platform authorization were absent; onboarding used a direct browser insert; domain resolution, invitations, storage, and real school workspaces were absent.
-- **Fake/demo:** the prototype's localStorage persistence described in older handover text is not present in the current code, and the onboarding UI previously implied functionality it could not securely perform.
-- **Security risks:** broad tenant-member `FOR ALL` policies allowed every member to write every module; students and parents were not linked to records; results were visible to all tenant members; platform-admin checks were not applied to frontend onboarding; errors exposed database messages.
-- **Missing controls:** granular permissions, teacher assignments, parent/student links, invitation lifecycle, terms/forms/staff entities, storage policies, and edge-function authorization.
+- **Works:** role-based workspaces with a context switcher, dynamic branding
+  application, tenant onboarding via a secure Edge Function, academic setup
+  CRUD, student/staff CRUD, teacher-assignment-scoped attendance and
+  assessments, published-only student/parent result visibility, audience/
+  date-scoped announcements, invitation issuance and acceptance.
+- **Partial:** production hostname → tenant resolution is not implemented
+  (users pick their workspace from a context switcher instead of a verified
+  domain); invitation emails are not sent (the raw token is shown once to the
+  inviter to relay manually); there is no automated test suite.
+- **Out of MVP scope (by design):** library, transport, boarding, payroll,
+  LMS, procurement, timetable, fee collection UI — see `PRODUCT_MASTER.md`
+  and `docs/ROADMAP.md`.
+- **Security posture:** every tenant-owned table has RLS; teacher writes are
+  scoped to `teacher_assignments`, not just role permission; student/parent
+  result reads are restricted to published assessments; announcements are
+  audience/date filtered at the RLS layer. See `docs/SECURITY.md`.
 
-## Recommended architecture
+## Recommended next steps
 
-Use Supabase Auth with a shared PostgreSQL database. Every tenant-owned table carries `tenant_id`; RLS and narrowly scoped `SECURITY DEFINER` helper functions are the isolation boundary. Platform operations run through authenticated Edge Functions using the service-role secret stored only in Supabase. The static client uses only the publishable/anon key. Resolve a tenant from a verified hostname in production, with slug/query selection only for development. Expand the modular monolith only after the MVP security and test suite is established.
+Add an automated RLS test suite (e.g. `pgTAP` or scripted client tests per
+`docs/TESTING.md`), production hostname resolution, transactional email for
+invitations, and MFA/monitoring/backup runbooks before onboarding a real
+paying customer.

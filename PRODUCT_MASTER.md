@@ -16,23 +16,26 @@ Domain -> Tenant resolution -> Branding -> Authentication -> Authorization -> Te
 Platform: Super Admin, Support.
 School: School Admin, Principal, Registrar, Teacher, Finance, Librarian, Parent, Student.
 
-## Implemented foundation
-- GitHub Pages-compatible frontend
-- Supabase integration point
-- PostgreSQL tenant schema
-- Tenant branding
-- Tenant domains
+## Implemented (Release 1 MVP)
+- GitHub Pages-compatible, no-build-step frontend with real role workspaces
+- Platform admin dashboard, school search/detail/suspend/activate, and a
+  5-step school onboarding wizard (Edge Function `create-tenant`)
+- Tenant branding applied dynamically (white-label, not just stored)
 - Module entitlements
-- Platform administrators
-- Tenant memberships
-- Academic years/classes/subjects
-- Students/enrolments
-- Attendance
-- Assessments/results
-- Fees/invoices/payments foundation
-- Announcements
+- Platform administrators, tenant memberships, invitation issuance and
+  acceptance (Edge Functions `invite-user`, `accept-invitation`)
+- Academic setup CRUD: years, terms, classes, subjects, teacher assignments,
+  student enrolments
+- Student and staff management CRUD, student profile view
+- Attendance and assessments/results scoped to teacher assignments
+- Parent portal (`parent_profiles`, `parent_student_relationships`)
+- Announcements scoped by audience and publish/expiry dates
 - Audit log table
-- RLS baseline
+- RLS enforcing tenant isolation, role permissions, and teacher/parent/
+  student scoping (see `docs/DATABASE_SCHEMA.md`, `docs/SECURITY.md`)
+
+Fees/invoices/payments tables exist in the schema as a foundation for a
+future release but have no UI in this MVP (out of scope per the brief).
 
 ## Product modules roadmap
 1. Admissions

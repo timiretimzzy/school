@@ -5,6 +5,11 @@ const json = (body: unknown, status = 200) =>
 const url = Deno.env.get("SUPABASE_URL")!;
 const admin = createClient(url, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
 
+async function hashToken(raw: string) {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(raw));
+  return Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
 Deno.serve(async (request) => {
   if (request.method !== "POST") return json({ error: "method_not_allowed" }, 405);
   const token = request.headers.get("authorization")?.replace("Bearer ", "");
@@ -23,6 +28,32 @@ Deno.serve(async (request) => {
   await admin.from("tenant_branding").insert({ tenant_id: tenant.id, ...branding });
   const modules = Array.isArray(input.modules) ? input.modules.filter((m: unknown) => typeof m === "string") : [];
   if (modules.length) await admin.from("tenant_modules").insert(modules.map((module_key: string) => ({ tenant_id: tenant.id, module_key, enabled: true })));
+
+  let invitation: { id: string; email: string } | null = null;
+  const adminEmail = typeof input.admin_email === "string" ? input.admin_email.trim().toLowerCase() : "";
+  if (adminEmail) {
+    const raw = crypto.randomUUID() + crypto.randomUUID();
+    const token_hash = await hashToken(raw);
+    const { data: inv, error: invError } = await admin
+      .from("tenant_invitations")
+      .insert({
+        tenant_id: tenant.id,
+        email: adminEmail,
+        role: "school_admin",
+        token_hash,
+        expires_at: new Date(Date.now() + 7 * 86400000).toISOString(),
+        invited_by: caller.data.user.id,
+      })
+      .select("id, email")
+      .single();
+    if (!invError && inv) {
+      invitation = inv;
+      // The raw token is only ever returned once, in this response, so the
+      // platform admin can relay it to the school's initial administrator.
+      (invitation as unknown as Record<string, string>).token = raw;
+    }
+  }
+
   await admin.from("audit_logs").insert({ actor_id: caller.data.user.id, action: "tenant.created", entity_type: "tenant", entity_id: tenant.id, after_data: { name, slug } });
-  return json({ tenant });
+  return json({ tenant, invitation });
 });

@@ -48,7 +48,7 @@ insert into public.permissions values
  ('record_attendance','Record attendance'),('manage_results','Manage assessments and results'),('view_finance','View finance records'),
  ('manage_announcements','Manage announcements') on conflict do nothing;
 create table public.role_permissions (role public.membership_role references public.roles, permission_key text references public.permissions, primary key(role,permission_key));
-insert into public.role_permissions select r, p from (values
+insert into public.role_permissions select r::public.membership_role, p from (values
  ('school_admin','manage_tenant'),('school_admin','manage_students'),('school_admin','manage_academics'),('school_admin','record_attendance'),('school_admin','manage_results'),('school_admin','view_finance'),('school_admin','manage_announcements'),
  ('principal','manage_students'),('principal','manage_academics'),('principal','record_attendance'),('principal','manage_results'),('principal','manage_announcements'),
  ('registrar','manage_students'),('registrar','manage_academics'),('teacher','record_attendance'),('teacher','manage_results'),('finance_officer','view_finance')

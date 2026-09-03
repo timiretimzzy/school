@@ -1,7 +1,33 @@
 # Product handover
 
-EduStack is FiscalStack Solutions' white-label, multi-tenant school SaaS. The current release is a secure database foundation plus a static platform control-centre prototype. PostgreSQL is the source of truth; browser storage is not used.
+## Identity
 
-The migration defines tenants, branding, modules, users/roles/permissions, academics, students, links, attendance, assessments/results, finance foundations, announcements, invitations, and audit logs. Platform-only mutations go through authenticated Edge Functions. School data is protected by RLS and role-aware policies.
+- **Owner:** FiscalStack Solutions
+- **Product:** EduStack Platform — multi-tenant, white-label school
+  management SaaS. Not tied to any single school's identity.
 
-Current limitations: the static client has no complete sign-in form or school workspace CRUD, invitation email delivery and acceptance are not implemented, storage policies are pending, and custom-domain routing is documented rather than hosted. Next priorities are storage, acceptance flow, school administration screens, automated Supabase tests, MFA/rate limiting, and production deployment.
+## Status: Release 1 — commercial MVP
+
+This is a real, working vertical slice, not a database schema plus a
+prototype landing page. It covers the full journey described in
+`PRODUCT_MASTER.md`: platform admin onboarding → school admin setup →
+teachers → students → parents, with tenant data isolation and role
+scoping enforced by PostgreSQL RLS (`supabase/migrations/`), privileged
+mutations performed by Edge Functions (`supabase/functions/`), and a
+static, no-build-step frontend (`app.js`, `js/`) suitable for GitHub Pages.
+
+See `README.md` for the concrete feature list, `docs/DEMO_CREDENTIALS.md`
+for how to stand up a demo tenant and users, and `docs/TESTING.md` for the
+acceptance test plan, including explicit tenant/role/student/parent privacy
+checks.
+
+## Honest statement
+
+**READY FOR TESTING** for the workflows listed in `README.md` and
+`docs/TESTING.md`, once a Supabase project is linked, migrations are
+applied, Edge Functions are deployed, and demo Auth users are created per
+`docs/DEMO_CREDENTIALS.md` (Auth user creation cannot be scripted safely from
+this repository). It is **not** production-ready: see
+`docs/ROADMAP.md` for the specific gaps (email delivery, hostname
+resolution, MFA, automated tests, monitoring/backups) that remain before
+selling to a real school.
