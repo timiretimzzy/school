@@ -92,7 +92,7 @@ do $$ declare t text; begin
  end loop;
 end $$;
 create policy results_read on public.assessment_results for select using(has_permission(tenant_id,'manage_results') or is_linked_student(student_id));
-create policy results_write on public.assessment_results for insert with check(has_permission(tenant_id,'manage_results') and mark <= (select maximum_mark from public.assessments a where a.id=assessment_id and a.tenant_id=tenant_id));
+create policy results_write on public.assessment_results for insert with check(has_permission(tenant_id,'manage_results') and mark <= (select maximum_mark from public.assessments a where a.id=assessment_id and a.tenant_id=assessment_results.tenant_id));
 create policy audit_read on public.audit_logs for select using(is_platform_admin() or has_tenant_membership(tenant_id));
 drop policy if exists tenant_access_tenant_branding on public.tenant_branding;
 create policy branding_read on public.tenant_branding for select using(has_tenant_membership(tenant_id));
