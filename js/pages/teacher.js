@@ -99,10 +99,10 @@ async function renderAttendance(body, tenantId, userId) {
           .map((e) => {
             const current = existingByStudent[e.student_id] || "present";
             return `<tr><td>${esc(e.students?.first_name)} ${esc(e.students?.last_name)} (${esc(e.students?.admission_number)})</td>${["present", "absent", "late", "excused"]
-              .map((st) => `<td><input type="radio" name="s-${e.student_id}" value="${st}" ${current === st ? "checked" : ""}></td>`)
+              .map((st) => `<td><input type="radio" name="s-${esc(e.student_id)}" value="${st}" ${current === st ? "checked" : ""}></td>`)
               .join("")}</tr>`;
           })
-          .join("")}</tbody></table><input type="hidden" name="class_id" value="${classId}"><input type="hidden" name="date" value="${date}"><button type="submit" class="primary">Save attendance</button></form>`
+          .join("")}</tbody></table><input type="hidden" name="class_id" value="${esc(classId)}"><input type="hidden" name="date" value="${esc(date)}"><button type="submit" class="primary">Save attendance</button></form>`
       : `<p class="muted">No students are enrolled in this class yet.</p>`;
     const form = list.querySelector("#att-form");
     if (form) {
@@ -214,10 +214,10 @@ async function renderAssessments(body, tenantId, userId) {
     const marksByStudent = Object.fromEntries((existing || []).map((r) => [r.student_id, r.mark]));
     msg.textContent = "";
     list.innerHTML = enrolled.length
-      ? `<form id="marks-form"><table class="data"><thead><tr><th>Student</th><th>Mark (max ${maxMark})</th></tr></thead><tbody>${enrolled
+      ? `<form id="marks-form"><table class="data"><thead><tr><th>Student</th><th>Mark (max ${esc(maxMark)})</th></tr></thead><tbody>${enrolled
           .map(
             (e) =>
-              `<tr><td>${esc(e.students?.first_name)} ${esc(e.students?.last_name)} (${esc(e.students?.admission_number)})</td><td><input type="number" min="0" max="${maxMark}" step="0.5" name="m-${e.student_id}" value="${marksByStudent[e.student_id] ?? ""}"></td></tr>`,
+              `<tr><td>${esc(e.students?.first_name)} ${esc(e.students?.last_name)} (${esc(e.students?.admission_number)})</td><td><input type="number" min="0" max="${esc(maxMark)}" step="0.5" name="m-${esc(e.student_id)}" value="${esc(marksByStudent[e.student_id] ?? "")}"></td></tr>`,
           )
           .join("")}</tbody></table>
         <div class="wizard-nav"><button type="submit">Save draft</button><button type="button" id="publish-btn" class="primary">Publish results</button></div></form>`
