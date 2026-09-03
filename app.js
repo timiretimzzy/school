@@ -1,13 +1,161 @@
-const c=window.EDUSTACK_CONFIG||{};
-const db=c.SUPABASE_URL&&!c.SUPABASE_URL.includes('YOUR_PROJECT')
-  ? window.supabase.createClient(c.SUPABASE_URL,c.SUPABASE_PUBLISHABLE_KEY||c.SUPABASE_ANON_KEY):null;
-let session=null;
-const $=id=>document.getElementById(id);
-document.querySelectorAll('.nav').forEach(x=>x.onclick=()=>view(x.dataset.v));
-function view(v){document.querySelectorAll('.view').forEach(x=>x.classList.remove('active'));document.querySelectorAll('.nav').forEach(x=>x.classList.remove('active'));$(v)?.classList.add('active');document.querySelector(`[data-v="${v}"]`)?.classList.add('active');$('title').textContent={overview:'Platform overview',schools:'Customer schools',onboard:'Onboard a school',architecture:'Architecture'}[v]||v}
-function safeError(error){return error?.code==='42501'?'You do not have permission for this action.':error?.code==='23505'?'That value is already in use.':'The request could not be completed. Please try again.'}
-async function loadSchools(){const o=$('list');if(!db){o.textContent='Supabase is not configured. See docs/ENVIRONMENT_SETUP.md';return}const {data,error}=await db.from('tenants').select('name,slug,status,subscription_status').order('created_at',{ascending:false});o.textContent=error?safeError(error):(data?.length?data.map(x=>`${x.name} | ${x.slug} | ${x.status}`).join('\n'):'No schools yet')}
-async function init(){if(!db){$('auth-status').textContent='Demo configuration only — connect Supabase to sign in.';return}const result=await db.auth.getSession();session=result.data.session;if(!session){$('auth-status').textContent='Sign in with a platform administrator account to manage tenants.';return}$('auth-status').textContent=`Signed in as ${session.user.email}`;loadSchools()}
-$('login-form').onsubmit=async e=>{e.preventDefault();if(!db){$('auth-status').textContent='Supabase is not configured.';return}const {error}=await db.auth.signInWithPassword({email:$('login-email').value,password:$('login-password').value});$('auth-status').textContent=error?'Sign-in failed. Check your details.':'Signed in. Loading…';if(!error)init()}
-$('form').onsubmit=async e=>{e.preventDefault();const o=$('message');if(!db||!session){o.textContent='A signed-in platform administrator is required.';return}o.textContent='Creating tenant…';const modules=[...document.querySelectorAll('.checks input:checked')].map(x=>x.value);const {data,error}=await db.functions.invoke('create-tenant',{body:{name:$('name').value.trim(),slug:$('slug').value.trim(),motto:$('motto').value.trim()||null,branding:{primary_color:$('primary').value,secondary_color:$('secondary').value},modules}});o.textContent=error?safeError(error):`Tenant ${data.tenant.name} created successfully.`;if(!error)loadSchools()}
+import { db, isConfigured } from "./js/supabaseClient.js";
+import { el, esc, safeError } from "./js/util.js";
+import { resolveIdentity, buildContexts } from "./js/session.js";
+import { applyBranding, resetBranding, loadTenantBranding } from "./js/branding.js";
+import { renderPlatform } from "./js/pages/platformAdmin.js";
+import { renderSchoolAdmin } from "./js/pages/schoolAdmin.js";
+import { renderTeacher } from "./js/pages/teacher.js";
+import { renderStudent } from "./js/pages/student.js";
+import { renderParent } from "./js/pages/parent.js";
+import { renderAcceptInvite } from "./js/pages/acceptInvite.js";
+
+let identity = null;
+let contexts = [];
+let activeContext = null;
+
+const NAV = {
+  platform: [
+    ["dashboard", "Dashboard"],
+    ["schools", "Schools"],
+    ["onboard", "Onboard a school"],
+  ],
+  school: [
+    ["dashboard", "Dashboard"],
+    ["academics", "Academic setup"],
+    ["students", "Students"],
+    ["staff", "Staff & teachers"],
+    ["announcements", "Announcements"],
+  ],
+  teacher: [
+    ["dashboard", "Dashboard"],
+    ["attendance", "Attendance"],
+    ["assessments", "Assessments & marks"],
+  ],
+  student: [],
+  parent: [],
+};
+
+const SECTION_PREFIX = { platform: "platform", school: "school", teacher: "teacher", student: "student", parent: "parent" };
+
+async function init() {
+  if (!isConfigured) {
+    el("config-status").textContent = "Supabase is not configured. See docs/ENVIRONMENT_SETUP.md.";
+    return;
+  }
+  el("login-form").onsubmit = onLogin;
+  el("signout").onclick = onSignOut;
+  window.addEventListener("hashchange", route);
+
+  const { data } = await db.auth.getSession();
+  if (data.session) await onSignedIn(data.session);
+  else showLogin();
+
+  db.auth.onAuthStateChange((_event, session) => {
+    if (session && !identity) onSignedIn(session);
+    if (!session) showLogin();
+  });
+}
+
+function showLogin() {
+  el("login-screen").classList.remove("hidden");
+  el("shell").classList.add("hidden");
+  resetBranding();
+}
+
+async function onLogin(e) {
+  e.preventDefault();
+  const msg = el("login-msg");
+  msg.textContent = "Signing in…";
+  const { error } = await db.auth.signInWithPassword({ email: el("login-email").value, password: el("login-password").value });
+  if (error) {
+    msg.textContent = "Sign-in failed. Check your email and password.";
+    return;
+  }
+  msg.textContent = "";
+}
+
+async function onSignOut() {
+  await db.auth.signOut();
+  identity = null;
+  contexts = [];
+  activeContext = null;
+  showLogin();
+}
+
+async function onSignedIn(session) {
+  identity = await resolveIdentity(session.user);
+  contexts = buildContexts(identity);
+  if (!contexts.length) {
+    el("login-screen").classList.remove("hidden");
+    el("shell").classList.add("hidden");
+    el("login-msg").innerHTML = `Signed in as ${esc(session.user.email)}, but no school or platform role is linked to this account yet. If you have an invitation, <a href="#/accept-invite">accept it here</a>.`;
+    return;
+  }
+  el("login-screen").classList.add("hidden");
+  el("shell").classList.remove("hidden");
+  el("session-badge").textContent = `● ${session.user.email}`;
+  const switcher = el("context-switch");
+  switcher.innerHTML = contexts.map((c, i) => `<option value="${i}">${esc(c.label)}</option>`).join("");
+  switcher.onchange = () => setContext(Number(switcher.value));
+  await setContext(0);
+}
+
+async function setContext(index) {
+  activeContext = contexts[index];
+  el("context-switch").value = String(index);
+  if (activeContext.tenantId) {
+    const branding = await loadTenantBranding(activeContext.tenantId);
+    applyBranding(branding, activeContext.label);
+  } else {
+    resetBranding();
+  }
+  renderSidebar();
+  const hash = window.location.hash.replace("#/", "");
+  const prefix = SECTION_PREFIX[activeContext.kind];
+  if (hash.startsWith(prefix + "/") || hash === "accept-invite") {
+    route();
+  } else {
+    window.location.hash = `#/${prefix}`;
+  }
+}
+
+function renderSidebar() {
+  const items = NAV[activeContext.kind] || [];
+  const prefix = SECTION_PREFIX[activeContext.kind];
+  el("sidebar-nav").innerHTML = items
+    .map(([v, label]) => `<a href="#/${prefix}/${v}" class="nav">${esc(label)}</a>`)
+    .join("");
+  el("context-label").textContent = activeContext.label.toUpperCase();
+}
+
+async function route() {
+  if (!activeContext) return;
+  const app = el("app");
+  const hash = window.location.hash.replace(/^#\//, "");
+  const [scope, section] = hash.split("/");
+
+  if (scope === "accept-invite") {
+    el("page-title").textContent = "Accept invitation";
+    renderAcceptInvite(app, async () => {
+      identity = null;
+      const { data } = await db.auth.getSession();
+      if (data.session) await onSignedIn(data.session);
+    });
+    return;
+  }
+
+  el("page-title").textContent = (section || "dashboard").replace(/-/g, " ").replace(/^\w/, (c) => c.toUpperCase());
+  document.querySelectorAll("#sidebar-nav .nav").forEach((a) => a.classList.toggle("active", a.getAttribute("href") === `#/${hash}`));
+
+  try {
+    if (activeContext.kind === "platform") return renderPlatform(app, section);
+    if (activeContext.kind === "school") return renderSchoolAdmin(app, activeContext.tenantId, section);
+    if (activeContext.kind === "teacher") return renderTeacher(app, activeContext.tenantId, identity.user.id, section);
+    if (activeContext.kind === "student") return renderStudent(app, activeContext.tenantId, identity.user.id);
+    if (activeContext.kind === "parent") return renderParent(app, activeContext.tenantId, activeContext.parentId);
+  } catch (err) {
+    app.innerHTML = `<p class="error">${esc(safeError(err))}</p>`;
+  }
+}
+
 init();
