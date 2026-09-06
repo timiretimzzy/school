@@ -1,0 +1,48 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>EduStack | FiscalStack Solutions</title>
+<link rel="stylesheet" href="styles.css">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="config.js"></script>
+</head>
+<body>
+<div id="login-screen" class="login-screen">
+  <div class="login-card">
+    <div class="brand"><b>EDUSTACK</b><small>FiscalStack Solutions</small></div>
+    <p id="config-status" class="muted"></p>
+    <form id="login-form">
+      <label>Login ID<input id="login-id" type="text" placeholder="STU-7K4M92 or TCH-X8P3Q1" required autocomplete="username"></label>
+      <label>Password<input id="login-password" type="password" required autocomplete="current-password"></label>
+      <button type="submit" class="primary">Sign in</button>
+    </form>
+    <p id="login-msg" role="status"></p>
+    <p class="muted small">Have an invitation instead? <a href="#/accept-invite">Accept it here</a> after signing in.</p>
+  </div>
+</div>
+
+<div id="shell" class="shell hidden">
+  <aside>
+    <div class="brand"><img id="brand-logo" class="hidden"><b id="brand-name">EDUSTACK</b><small>FiscalStack Solutions</small></div>
+    <nav id="sidebar-nav"></nav>
+    <footer>
+      <select id="context-switch"></select>
+      <button id="signout" class="link">Sign out</button>
+    </footer>
+  </aside>
+  <main>
+    <header>
+      <div>
+        <small id="context-label">WORKSPACE</small>
+        <h1 id="page-title">Dashboard</h1>
+      </div>
+      <span id="session-badge">●</span>
+    </header>
+    <div id="app"></div>
+  </main>
+</div>
+<script type="module" src="app.js"></script>
+</body>
+</html>

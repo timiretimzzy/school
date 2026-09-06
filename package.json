@@ -1,0 +1,27 @@
+{
+  "name": "school",
+  "version": "1.0.0",
+  "description": "EduStack Platform - Commercial multi-tenant, white-label school operating system",
+  "type": "module",
+  "scripts": {
+    "check": "node scripts/static-check.mjs",
+    "start": "python3 -m http.server 8080",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "edustack",
+    "school",
+    "multi-tenant",
+    "supabase"
+  ],
+  "author": "FiscalStack Solutions",
+  "license": "ISC",
+  "dependencies": {
+    "@supabase/supabase-js": "^2.115.0",
+    "node-fetch": "^3.3.2",
+    "pg": "^8.23.0"
+  },
+  "devDependencies": {
+    "supabase": "^2.116.0"
+  }
+}

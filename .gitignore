@@ -1,0 +1,35 @@
+.env
+.env.*
+node_modules/
+
+# Debug/test scripts (contain hardcoded secrets)
+*-audit*.js
+auth-audit.js
+auth-audit2.js
+check-*.js
+comprehensive-audit.js
+cross-tenant-test.js
+debug-*.js
+deploy-functions.js
+final-verify.js
+fix-*.js
+quick-security-test.js
+run-e2e-test.js
+security-regression-test.js
+test-*.js
+try-connections.js
+verify-*.js
+apply-*.js
+apply-*.mjs
+audit-*.js
+simple-admin-test.js
+create-test-accounts.js
+debug-schema.js
+
+# Temp/build artifacts
+supabase/.temp/
+supabase.zip
+simple_test.txt
+test_output.txt
+tf3.txt
+$null
