@@ -153,7 +153,6 @@ async function onSignedIn(session) {
 }
 
 function showPasswordChangeFlow(userId, userEmail, contextsArray) {
-  // Render the password change component in the main app area
   el("login-screen").classList.add("hidden");
   el("shell").classList.add("hidden");
   
@@ -163,7 +162,6 @@ function showPasswordChangeFlow(userId, userEmail, contextsArray) {
   
   renderPasswordChange(overlay, async () => {
     document.body.removeChild(overlay);
-    // After password change, re-resolve identity and continue
     identity = await resolveIdentity((await db.auth.getUser()).data.user);
     contexts = buildContexts(identity);
     
@@ -173,14 +171,13 @@ function showPasswordChangeFlow(userId, userEmail, contextsArray) {
     }
     el("login-screen").classList.add("hidden");
     el("shell").classList.remove("hidden");
+    el("session-badge").textContent = `● ${(await db.auth.getUser()).data.user.email}`;
     const switcher = el("context-switch");
     switcher.innerHTML = contexts.map((c, i) => `<option value="${i}">${esc(c.label)}</option>`).join("");
     switcher.onchange = () => setContext(Number(switcher.value));
     const platformIndex = contexts.findIndex((c) => c.kind === "platform");
     const schoolIndex = contexts.findIndex((c) => c.kind === "school" || c.kind === "teacher" || c.kind === "parent" || c.kind === "student");
     await setContext(platformIndex >= 0 ? platformIndex : (schoolIndex >= 0 ? schoolIndex : 0));
-    // Trigger route for the new context
-    window.location.hash = "";
   }, { userId, tenantId: contextsArray[0]?.tenantId });
 }
 
@@ -215,15 +212,15 @@ function renderSidebar() {
 async function route() {
   if (!activeContext) return;
   
-  // Route guard: Check if user must change password (except for accept-invite and password change flows)
   const hash = window.location.hash.replace(/^#\//, "");
+  const scope = hash.split("/")[0] || "";
+  const section = hash.split("/")[1] || "dashboard";
   const isAcceptInvite = hash === "accept-invite";
   const isPasswordChange = hash === "change-password";
   
   if (!isAcceptInvite && !isPasswordChange) {
     const mustChangePassword = identity?.memberships?.some((m) => m.must_change_password === true);
     if (mustChangePassword) {
-      // Force password change - user cannot access any other route
       showPasswordChangeFlow(identity.user.id, identity.user.email, contexts);
       return;
     }

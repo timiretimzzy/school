@@ -2,18 +2,17 @@ import { db } from "../supabaseClient.js";
 
 export async function renderPasswordChange(container, onComplete, options = {}) {
   const { userId, tenantId } = options;
-  container.innerHTML = `<div class="modal">
-      <div>
+  container.innerHTML = `
+      <div style="max-width:400px;width:100%">
         <h2>Set your password</h2>
         <p class="muted">This is your first login. Please set a password to access your account.</p>
         <form id="password-form" class="grid">
           <label>Password<input type="password" name="password" required></label>
           <label>Confirm password<input type="password" name="password_confirm" required></label>
-          <div><button type="submit" class="primary">Set password</button> <button type="button" class="link" id="cancel">Cancel</button></div>
+          <div><button type="submit" class="primary">Set password</button></div>
         </form>
         <p id="password-msg" role="status"></p>
-      </div>
-    </div>`;
+      </div>`;
 
   const form = container.querySelector("#password-form");
   form.onsubmit = async (e) => {
@@ -64,12 +63,4 @@ export async function renderPasswordChange(container, onComplete, options = {}) 
       onComplete && onComplete();
     }, 1000);
   };
-  
-  const cancelBtn = container.querySelector("#cancel");
-  if (cancelBtn) {
-    cancelBtn.onclick = () => {
-      // Allow cancel - but user can't proceed without changing password
-      container.innerHTML = "";
-    };
-  }
 }
