@@ -41,14 +41,17 @@ export async function renderPasswordChange(container, onComplete, options = {}) 
     }
 
     // Call the change-password Edge Function
-    const response = await fetch("/functions/v1/change-password", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${session.access_token}`,
-      },
-      body: JSON.stringify({ new_password: pwd }),
-    });
+    const response = await fetch(
+      `${window.EDUSTACK_CONFIG.SUPABASE_URL}/functions/v1/change-password`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({ new_password: pwd }),
+      }
+    );
     const result = await response.json();
 
     if (result?.error || !result?.success) {

@@ -74,11 +74,17 @@ async function onLogin(e) {
 
   // Try login_id + password authentication first
   if (loginId) {
-    const response = await fetch("/functions/v1/login-with-login-id", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ login_id: loginId, password }),
-    });
+    const response = await fetch(
+      `${window.EDUSTACK_CONFIG.SUPABASE_URL}/functions/v1/login-with-login-id`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${window.EDUSTACK_CONFIG.SUPABASE_PUBLISHABLE_KEY || window.EDUSTACK_CONFIG.SUPABASE_ANON_KEY}`,
+        },
+        body: JSON.stringify({ login_id: loginId, password }),
+      }
+    );
     const data = await response.json();
 
     if (data?.error || !data?.success || !data?.session) {

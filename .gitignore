@@ -1,6 +1,9 @@
 .env
 .env.*
 node_modules/
+verify-migrations*.mjs
+package-lock.json
+setup-accounts.js
 
 # Debug/test scripts (contain hardcoded secrets)
 *-audit*.js
