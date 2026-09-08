@@ -72,7 +72,20 @@ async function onLogin(e) {
   const password = el("login-password").value.trim();
   await db.auth.signOut();
 
-  // Try login_id + password authentication first
+  // If input looks like an email, use Supabase auth directly
+  if (loginId.includes("@")) {
+    const { data: signIn, error: signInError } = await db.auth.signInWithPassword({ email: loginId, password });
+    if (signInError) {
+      msg.textContent = "Sign-in failed. Check your email and password.";
+      return;
+    }
+    if (signIn && signIn.session) {
+      await onSignedIn(signIn.session);
+      return;
+    }
+  }
+
+  // Try login_id + password authentication via Edge Function
   if (loginId) {
     const response = await fetch(
       `${window.EDUSTACK_CONFIG.SUPABASE_URL}/functions/v1/login-with-login-id`,
@@ -88,20 +101,7 @@ async function onLogin(e) {
     const data = await response.json();
 
     if (data?.error || !data?.success || !data?.session) {
-      // Fall back to email + password if login_id auth fails
-      const email = el("login-email").value.trim().toLowerCase();
-      if (email) {
-        const { data: signIn, error: signInError } = await db.auth.signInWithPassword({ email, password });
-        if (signInError) {
-          msg.textContent = "Sign-in failed. Check your login ID or email and password.";
-          return;
-        }
-        if (signIn && signIn.session) {
-          await onSignedIn(signIn.session);
-          return;
-        }
-      }
-      msg.textContent = data?.error || "Sign-in failed. Check your login ID or email and password.";
+      msg.textContent = data?.error || "Sign-in failed. Check your login ID and password.";
       return;
     }
 
@@ -111,27 +111,7 @@ async function onLogin(e) {
     return;
   }
 
-  // Fall back to email + password (backwards compatibility)
-  const email = el("login-email").value.trim().toLowerCase();
-  if (!email) {
-    msg.textContent = "Please enter a login ID or email.";
-    return;
-  }
-  const { data, error } = await db.auth.signInWithPassword({ email, password });
-  if (error) {
-    msg.textContent = error.message || "Sign-in failed. Check your email and password.";
-    return;
-  }
-  if (data && data.session) {
-    await onSignedIn(data.session);
-    return;
-  }
-  const session = await db.auth.getSession();
-  if (session.data && session.data.session) {
-    await onSignedIn(session.data.session);
-    return;
-  }
-  msg.textContent = "Signed in, but no session was returned. Please refresh.";
+  msg.textContent = "Please enter a login ID or email.";
 }
 
 async function onSignOut() {

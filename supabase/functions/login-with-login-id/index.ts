@@ -7,10 +7,16 @@ const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const supabase = createClient(supabaseUrl, supabaseAnonKey);
 const admin = createClient(supabaseUrl, serviceRoleKey);
 
+const CORS_HEADERS = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+};
+
 const response = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), {
     status,
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", ...CORS_HEADERS },
   });
 
 const DEFAULT_PASSWORD_MAP: Record<string, string> = {
@@ -45,6 +51,10 @@ function determineRoleFromPrefix(prefix: string): string | null {
 }
 
 Deno.serve(async (request) => {
+  if (request.method === "OPTIONS") {
+    return new Response(null, { status: 204, headers: CORS_HEADERS });
+  }
+
   const input = await request.json().catch(() => ({}));
 
   if (typeof input.login_id !== "string" || typeof input.password !== "string") {
