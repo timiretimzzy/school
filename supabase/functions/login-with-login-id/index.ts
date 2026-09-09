@@ -98,7 +98,6 @@ Deno.serve(async (request) => {
 
   let authUserId: string | null = null;
   let foundRole: string | null = null;
-  let foundTable: string | null = null;
 
   if (prefix === "STU") {
     const { data, error } = await admin
@@ -108,7 +107,6 @@ Deno.serve(async (request) => {
       .maybeSingle();
     if (!error && data?.id) {
       authUserId = data.id;
-      foundTable = "students";
     }
   } else if (prefix === "TCH") {
     const { data, error } = await admin
@@ -118,7 +116,6 @@ Deno.serve(async (request) => {
       .maybeSingle();
     if (!error && data?.user_id) {
       authUserId = data.user_id;
-      foundTable = "staff_profiles";
     }
   } else if (prefix === "PAR") {
     const { data, error } = await admin
@@ -128,7 +125,6 @@ Deno.serve(async (request) => {
       .maybeSingle();
     if (!error && data?.user_id) {
       authUserId = data.user_id;
-      foundTable = "parent_profiles";
     }
   }
 
@@ -178,6 +174,5 @@ Deno.serve(async (request) => {
     must_change_password: mustChangePassword,
     role: foundRole,
     login_id: canonical,
-    table: foundTable,
   }, 200, corsHeaders);
 });

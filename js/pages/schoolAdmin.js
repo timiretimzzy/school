@@ -463,11 +463,11 @@ async function inviteAllStudents(tenantId, onReload) {
   });
 
   if (!eligible.length) {
-    alert("No eligible students found. A student is eligible if they have a valid email and no active auth account or pending invitation.");
+    toast("No eligible students found.", "error");
     return;
   }
 
-  if (!confirm(`You are about to invite ${eligible.length} eligible student(s). Continue?`)) return;
+  confirmAction("Invite all eligible students?", `You are about to invite ${eligible.length} student(s).`, async () => {
 
   const overlay = document.createElement("div");
   overlay.className = "modal";
@@ -780,11 +780,11 @@ async function inviteAllTeachers(tenantId, onReload) {
   const alreadyInvited = (profiles.data || []).filter((s) => !linkedUserIds.has(s.user_id) && s.email && pendingEmails.has(s.email.toLowerCase())).length;
 
   if (!eligible.length) {
-    alert(`No eligible teachers found.\n\nAlready active: ${alreadyActive}\nNo email: ${noEmail}\nAlready invited: ${alreadyInvited}`);
+    toast(`No eligible teachers found. Already active: ${alreadyActive}, No email: ${noEmail}, Already invited: ${alreadyInvited}`, "error");
     return;
   }
 
-  if (!confirm(`You are about to invite ${eligible.length} eligible teacher(s). Continue?`)) return;
+  confirmAction("Invite all eligible teachers?", `You are about to invite ${eligible.length} teacher(s).`, async () => {
 
   const overlay = document.createElement("div");
   overlay.className = "modal";
@@ -1352,14 +1352,23 @@ async function renderAnnouncements(body, tenantId) {
 // ---------- Report Cards ----------
 
 async function renderReportCards(body, tenantId) {
-  body.innerHTML = `<p class="muted">Loading report cards…</p>`;
-  const [years, scales, { data: students }] = await Promise.all([
+  body.innerHTML = `<div class="loading-center"><span class="spinner lg"></span>Loading report cards…</div>`;
+  const [years, scales, terms, classes, subjects, { data: students }] = await Promise.all([
     db.from("academic_years").select("id, name").eq("tenant_id", tenantId).order("name", { ascending: false }),
     db.from("grading_scales").select("id, name, is_default").eq("tenant_id", tenantId),
+    db.from("terms").select("id, name, academic_year_id").eq("tenant_id", tenantId).order("starts_on"),
+    db.from("classes").select("id, name").eq("tenant_id", tenantId).order("name"),
+    db.from("subjects").select("id, name, code").eq("tenant_id", tenantId).order("name"),
     db.from("students").select("id, first_name, last_name, admission_number").eq("tenant_id", tenantId).eq("status", "active").order("last_name"),
   ]);
   const yearList = years || [];
   const scaleList = scales || [];
+  const termList = terms || [];
+  const classList = classes || [];
+  const subjectList = subjects || [];
+  const scaleById = Object.fromEntries(scaleList.map((s) => [s.id, s]));
+  const classById = Object.fromEntries(classList.map((c) => [c.id, c]));
+  const subjectById = Object.fromEntries(subjectList.map((s) => [s.id, s]));
 
   body.innerHTML = `
     <div class="tabs subtabs">
@@ -1379,70 +1388,240 @@ async function renderReportCards(body, tenantId) {
     };
   });
 
-  renderRCList(body.querySelector("#rc-list"), tenantId, yearList, scaleList);
+  renderRCList(body.querySelector("#rc-list"), tenantId, yearList, scaleList, termList, classList, subjectList, scaleById, classById, subjectById);
   renderScales(body.querySelector("#rc-scales"), tenantId, scaleList);
 }
 
-function renderRCList(container, tenantId, years, scales) {
+function renderRCList(container, tenantId, years, scales, terms, classes, subjects, scaleById, classById, subjectById) {
+  const classOptions = classes.map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join("");
+  const yearOptions = years.map((y) => `<option value="${y.id}">${esc(y.name)}</option>`).join("");
+  const termOptions = terms.map((t) => `<option value="${t.id}">${esc(t.name)}</option>`).join("");
   container.innerHTML = `
     <div class="panel" style="margin-top:16px">
       <div class="panel-head"><h2>Generate Report Cards</h2></div>
       <form id="rc-gen-form" class="grid">
-        <label>Academic Year<select id="rc-year" required>${years.map((y) => `<option value="${y.id}">${esc(y.name)}</option>`).join("")}</select></label>
+        <label>Academic Year<select id="rc-year" required>${yearOptions}</select></label>
+        <label>Term (optional)<select id="rc-term"><option value="">All terms</option>${termOptions}</select></label>
+        <label>Class (optional)<select id="rc-class"><option value="">All classes</option>${classOptions}</select></label>
         <label>Grading Scale<select id="rc-scale">${scales.map((s) => `<option value="${s.id}" ${s.is_default ? "selected" : ""}>${esc(s.name)}</option>`).join("")}</select></label>
         <div><button type="submit" class="primary">Generate Report Cards</button></div>
       </form>
       <p id="rc-msg" role="status"></p>
     </div>
     <div class="panel" style="margin-top:16px">
-      <div class="panel-head"><h2>Existing Report Cards</h2></div>
-      <div id="rc-list-table"><p class="muted">Click generate to create report cards for the selected year.</p></div>
+      <div class="panel-head"><h2>Existing Report Cards</h2>
+        <div class="actions">
+          <select id="rc-filter-year"><option value="">All years</option>${yearOptions}</select>
+          <select id="rc-filter-class"><option value="">All classes</option>${classOptions}</select>
+          <button id="print-all-btn" class="secondary">Print All</button>
+        </div>
+      </div>
+      <div id="rc-list-table"><p class="muted">Click generate to create report cards.</p></div>
     </div>`;
 
   container.querySelector("#rc-gen-form").onsubmit = async (e) => {
     e.preventDefault();
     const msg = container.querySelector("#rc-msg");
+    const btn = e.target.querySelector("button[type=submit]");
     const yearId = container.querySelector("#rc-year").value;
+    const termId = container.querySelector("#rc-term").value || null;
+    const classId = container.querySelector("#rc-class").value || null;
     const scaleId = container.querySelector("#rc-scale").value;
-    msg.textContent = "Generating report cards…";
+    btn.disabled = true;
+    msg.innerHTML = `<span class="spinner sm"></span> Generating report cards…`;
 
-    const { data: enrolled } = await db.from("student_enrolments").select("student_id, class_id").eq("academic_year_id", yearId);
-    if (!enrolled || !enrolled.length) { msg.textContent = "No students enrolled for this year."; return; }
+    let enrolled = [];
+    if (classId) {
+      const { data } = await db.from("student_enrolments").select("student_id, class_id").eq("academic_year_id", yearId).eq("class_id", classId);
+      enrolled = data || [];
+    } else {
+      const { data } = await db.from("student_enrolments").select("student_id, class_id").eq("academic_year_id", yearId);
+      enrolled = data || [];
+    }
+    if (!enrolled.length) { msg.textContent = "No students enrolled for this selection."; btn.disabled = false; return; }
 
-    const { data: assessments } = await db.from("assessments").select("id, class_id, subject_id, max_mark").eq("academic_year_id", yearId).eq("tenant_id", tenantId).eq("status", "published");
-    const assessmentIds = (assessments || []).map((a) => a.id);
+    let assessments = [];
+    if (termId) {
+      const { data } = await db.from("assessments").select("id, class_id, subject_id, maximum_mark, weighting").eq("academic_year_id", yearId).eq("tenant_id", tenantId).eq("term_id", termId).eq("status", "published");
+      assessments = data || [];
+    } else {
+      const { data } = await db.from("assessments").select("id, class_id, subject_id, maximum_mark, weighting").eq("academic_year_id", yearId).eq("tenant_id", tenantId).eq("status", "published");
+      assessments = data || [];
+    }
+    const assessmentIds = assessments.map((a) => a.id);
     const { data: results } = assessmentIds.length
       ? await db.from("assessment_results").select("assessment_id, student_id, mark").in("assessment_id", assessmentIds)
       : { data: [] };
 
     let created = 0;
+    let updated = 0;
     for (const enrol of enrolled) {
-      const existing = await db.from("report_cards").select("id").eq("student_id", enrol.student_id).eq("academic_year_id", yearId).is("term_id", null).maybeSingle();
-      if (existing.data) continue;
+      const existing = await db.from("report_cards").select("id").eq("student_id", enrol.student_id).eq("academic_year_id", yearId).eq("term_id", termId).maybeSingle();
 
       const studentResults = (results || []).filter((r) => r.student_id === enrol.student_id);
       const totalPct = studentResults.length
         ? studentResults.reduce((sum, r) => {
-            const a = (assessments || []).find((x) => x.id === r.assessment_id);
-            return sum + (a ? (r.mark / a.max_mark) * 100 : 0);
+            const a = assessments.find((x) => x.id === r.assessment_id);
+            return sum + (a ? (r.mark / a.maximum_mark) * 100 : 0);
           }, 0) / studentResults.length
         : 0;
 
-      const { data: rc } = await db.from("report_cards").insert({
-        tenant_id: tenantId, student_id: enrol.student_id, academic_year_id: yearId,
-        scale_id: scaleId || null, overall_average: Math.round(totalPct * 10) / 10, status: "draft",
-      }).select("id").single();
+      const grade = computeGrade(scaleById[scaleId], totalPct);
 
-      if (rc) {
+      if (existing.data) {
+        await db.from("report_cards").update({ overall_average: Math.round(totalPct * 10) / 10, grade, scale_id: scaleId }).eq("id", existing.data.id);
+        await db.from("report_card_lines").delete().eq("report_card_id", existing.data.id);
         for (const r of studentResults) {
-          const a = (assessments || []).find((x) => x.id === r.assessment_id);
-          if (a) await db.from("report_card_lines").insert({ report_card_id: rc.id, subject_id: a.subject_id, total_mark: r.mark });
+          const a = assessments.find((x) => x.id === r.assessment_id);
+          if (a) await db.from("report_card_lines").insert({ report_card_id: existing.data.id, subject_id: a.subject_id, total_mark: r.mark, max_mark: a.maximum_mark, average: Math.round((r.mark / a.maximum_mark) * 1000) / 10 });
         }
-        created++;
+        updated++;
+      } else {
+        const { data: rc } = await db.from("report_cards").insert({
+          tenant_id: tenantId, student_id: enrol.student_id, class_id: enrol.class_id, academic_year_id: yearId, term_id: termId,
+          scale_id: scaleId || null, overall_average: Math.round(totalPct * 10) / 10, grade, status: "draft",
+        }).select("id").single();
+        if (rc) {
+          for (const r of studentResults) {
+            const a = assessments.find((x) => x.id === r.assessment_id);
+            if (a) await db.from("report_card_lines").insert({ report_card_id: rc.id, subject_id: a.subject_id, total_mark: r.mark, max_mark: a.maximum_mark, average: Math.round((r.mark / a.maximum_mark) * 1000) / 10 });
+          }
+          created++;
+        }
       }
     }
-    msg.textContent = `Generated ${created} report card(s).`;
+    msg.textContent = `Done: ${created} created, ${updated} updated.`;
+    btn.disabled = false;
+    loadRCList(container, tenantId, years, classes, scaleById, classById, subjectById);
   };
+
+  container.querySelector("#rc-filter-year").onchange = () => loadRCList(container, tenantId, years, classes, scaleById, classById, subjectById);
+  container.querySelector("#rc-filter-class").onchange = () => loadRCList(container, tenantId, years, classes, scaleById, classById, subjectById);
+  container.querySelector("#print-all-btn").onclick = () => printAllReportCards(container);
+
+  loadRCList(container, tenantId, years, classes, scaleById, classById, subjectById);
+}
+
+async function loadRCList(container, tenantId, years, classes, scaleById, classById, subjectById) {
+  const tableEl = container.querySelector("#rc-list-table");
+  const filterYear = container.querySelector("#rc-filter-year").value;
+  const filterClass = container.querySelector("#rc-filter-class").value;
+  tableEl.innerHTML = `<div class="loading-center"><span class="spinner"></span>Loading…</div>`;
+
+  let query = db.from("report_cards").select("id, student_id, class_id, academic_year_id, overall_average, grade, status, created_at, students(first_name, last_name, admission_number)").eq("tenant_id", tenantId).order("created_at", { ascending: false });
+  if (filterYear) query = query.eq("academic_year_id", filterYear);
+  if (filterClass) query = query.eq("class_id", filterClass);
+  const { data, error } = await query.limit(100);
+  if (error) { tableEl.innerHTML = `<p class="error">${esc(safeError(error))}</p>`; return; }
+  const rcList = data || [];
+  if (!rcList.length) { tableEl.innerHTML = `<p class="muted">No report cards found.</p>`; return; }
+
+  tableEl.innerHTML = `<table class="data"><thead><tr><th>Student</th><th>Class</th><th>Average</th><th>Grade</th><th>Status</th><th></th></tr></thead><tbody>${rcList.map((rc) => `<tr>
+    <td>${esc(rc.students?.first_name || "")} ${esc(rc.students?.last_name || "")} (${esc(rc.students?.admission_number || "")})</td>
+    <td>${esc(classById[rc.class_id]?.name || "—")}</td>
+    <td>${rc.overall_average != null ? esc(rc.overall_average) + "%" : "—"}</td>
+    <td><span class="badge">${esc(rc.grade || "—")}</span></td>
+    <td><span class="badge ${rc.status === "published" ? "active" : "trial"}">${esc(rc.status)}</span></td>
+    <td><button class="link view-rc" data-id="${rc.id}">View</button> <button class="link publish-rc" data-id="${rc.id}" ${rc.status === "published" ? "disabled" : ""}>Publish</button></td>
+  </tr>`).join("")}</tbody></table>`;
+
+  tableEl.querySelectorAll(".view-rc").forEach((btn) => {
+    btn.onclick = () => viewReportCard(btn.dataset.id, tenantId, scaleById, classById, subjectById);
+  });
+  tableEl.querySelectorAll(".publish-rc").forEach((btn) => {
+    btn.onclick = async () => {
+      await db.from("report_cards").update({ status: "published" }).eq("id", btn.dataset.id);
+      toast("Report card published");
+      loadRCList(container, tenantId, years, classes, scaleById, classById, subjectById);
+    };
+  });
+}
+
+function computeGrade(scale, pct) {
+  if (!scale) return null;
+  // For now, use a simple A-F scale if no grading_scale_levels exist
+  if (pct >= 90) return "A";
+  if (pct >= 80) return "B";
+  if (pct >= 70) return "C";
+  if (pct >= 60) return "D";
+  return "F";
+}
+
+async function viewReportCard(rcId, tenantId, scaleById, classById, subjectById) {
+  const { data: rc } = await db.from("report_cards").select("*, students(first_name, last_name, admission_number, date_of_birth, gender)").eq("id", rcId).single();
+  if (!rc) return;
+  const { data: lines } = await db.from("report_card_lines").select("*, subjects(name, code)").eq("report_card_id", rcId);
+  const { data: attendance } = await db.from("attendance_records").select("status").eq("student_id", rc.student_id);
+  const attSummary = (attendance || []).reduce((acc, a) => ({ ...acc, [a.status]: (acc[a.status] || 0) + 1 }), {});
+
+  const overlay = document.createElement("div");
+  overlay.className = "modal";
+  overlay.innerHTML = `<div style="max-width:700px">
+    <div class="report-card-print" id="rc-print-area">
+      <div style="text-align:center;border-bottom:2px solid var(--primary);padding-bottom:16px;margin-bottom:16px">
+        <h2 style="margin:0;color:var(--primary)">SCHOOL NAME</h2>
+        <p class="muted">School Address • Phone • Email</p>
+        <h3 style="margin:8px 0 0">STUDENT REPORT CARD</h3>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px">
+        <div><strong>Name:</strong> ${esc(rc.students?.first_name)} ${esc(rc.students?.last_name)}</div>
+        <div><strong>Admission #:</strong> ${esc(rc.students?.admission_number)}</div>
+        <div><strong>Class:</strong> ${esc(classById[rc.class_id]?.name || "—")}</div>
+        <div><strong>Academic Year:</strong> ${esc(years?.find((y) => y.id === rc.academic_year_id)?.name || "—")}</div>
+      </div>
+      <table class="data" style="margin-top:12px"><thead><tr><th>Subject</th><th>Mark</th><th>Max</th><th>Average %</th><th>Grade</th></tr></thead>
+      <tbody>${(lines || []).map((l) => `<tr>
+        <td>${esc(l.subjects?.name || "—")}</td>
+        <td>${l.total_mark != null ? esc(l.total_mark) : "—"}</td>
+        <td>${l.max_mark != null ? esc(l.max_mark) : "—"}</td>
+        <td>${l.average != null ? esc(l.average) + "%" : "—"}</td>
+        <td>${esc(computeGrade(null, l.average || 0))}</td>
+      </tr>`).join("") || '<tr><td colspan="5" class="muted">No subject data.</td></tr>'}</tbody></table>
+      <div style="margin-top:16px;padding-top:12px;border-top:1px solid #e0e7f0">
+        <strong>Overall Average:</strong> ${rc.overall_average != null ? esc(rc.overall_average) + "%" : "—"} | <strong>Grade:</strong> ${esc(rc.grade || "—")}
+      </div>
+      <div style="margin-top:16px">
+        <strong>Attendance Summary</strong>
+        <p>${Object.entries(attSummary).map(([k, v]) => `<span class="badge">${k}: ${v}</span>`).join(" ") || "No records"}</p>
+      </div>
+    </div>
+    <div style="display:flex;gap:8px;margin-top:16px;justify-content:flex-end">
+      <button class="secondary" id="print-rc-btn">Print Report Card</button>
+      <button class="link" id="close-rc">Close</button>
+    </div>
+  </div>`;
+  document.body.appendChild(overlay);
+  overlay.querySelector("#close-rc").onclick = () => overlay.remove();
+  overlay.querySelector("#print-rc-btn").onclick = () => {
+    const content = overlay.querySelector("#rc-print-area").innerHTML;
+    const win = window.open("", "_blank");
+    win.document.write(`<html><head><title>Report Card</title><style>
+      body{font-family:Arial,sans-serif;padding:20px;color:#17243a}
+      table{width:100%;border-collapse:collapse;margin-top:12px}
+      th,td{border:1px solid #e0e7f0;padding:8px;text-align:left;font-size:13px}
+      th{background:#f4f7fb;font-weight:600}
+      .badge{display:inline-block;padding:2px 8px;border-radius:10px;background:#eaf2ff;font-size:11px}
+    </style></head><body>${content}</body></html>`);
+    win.document.close();
+    win.print();
+  };
+}
+
+function printAllReportCards(container) {
+  const area = container.querySelector("#rc-list-table");
+  if (!area.querySelector("table")) { toast("No report cards to print", "error"); return; }
+  const content = area.innerHTML;
+  const win = window.open("", "_blank");
+  win.document.write(`<html><head><title>Report Cards</title><style>
+    body{font-family:Arial,sans-serif;padding:20px;color:#17243a}
+    table{width:100%;border-collapse:collapse;margin-top:12px}
+    th,td{border:1px solid #e0e7f0;padding:8px;text-align:left;font-size:13px}
+    th{background:#f4f7fb;font-weight:600}
+    .badge{display:inline-block;padding:2px 8px;border-radius:10px;background:#eaf2ff;font-size:11px}
+    button{display:none}
+  </style></head><body><h1>Report Cards</h1>${content}</body></html>`);
+  win.document.close();
+  win.print();
 }
 
 function renderScales(container, tenantId, existing) {
@@ -1451,8 +1630,8 @@ function renderScales(container, tenantId, existing) {
       <div class="panel-head"><h2>Grading Scales</h2>
         <button id="add-scale-btn" class="primary">New Scale</button>
       </div>
-      <table class="data"><thead><tr><th>Name</th><th>Default</th></tr></thead>
-      <tbody>${existing.map((s) => `<tr><td>${esc(s.name)}</td><td>${s.is_default ? "Yes" : ""}</td></tr>`).join("") || '<tr><td colspan="2" class="muted">No grading scales yet.</td></tr>'}</tbody></table>
+      <table class="data"><thead><tr><th>Name</th><th>Default</th><th></th></tr></thead>
+      <tbody>${existing.map((s) => `<tr><td>${esc(s.name)}</td><td>${s.is_default ? "Yes" : ""}</td><td><button class="link edit-scale" data-id="${s.id}">Edit</button></td></tr>`).join("") || '<tr><td colspan="3" class="muted">No grading scales yet.</td></tr>'}</tbody></table>
     </div>
     <div id="scale-form-area"></div>`;
 
@@ -1586,44 +1765,232 @@ async function renderTimetable(body, tenantId) {
 // ---------- Finance ----------
 
 async function renderFinance(body, tenantId) {
-  body.innerHTML = `<p class="muted">Loading finance…</p>`;
-  const [catResult, structResult, invResult, payResult] = await Promise.all([
+  body.innerHTML = `<div class="loading-center"><span class="spinner lg"></span>Loading finance…</div>`;
+  const [catResult, structResult, invResult, payResult, { data: students }, { data: classes }] = await Promise.all([
     db.from("fee_categories").select("id, name, description").eq("tenant_id", tenantId).order("sort_order"),
-    db.from("fee_structures").select("id, category_id, amount, currency, fee_categories(name), grades_or_forms(name)").eq("tenant_id", tenantId),
-    db.from("fee_invoices").select("id, amount, status, due_date, students(first_name, last_name, admission_number)").eq("tenant_id", tenantId).order("created_at", { ascending: false }).limit(50),
-    db.from("payments").select("id, amount, payment_method, payment_date").eq("tenant_id", tenantId).order("payment_date", { ascending: false }).limit(50),
+    db.from("fee_structures").select("id, category_id, amount, currency, grade_or_form, fee_categories(name)").eq("tenant_id", tenantId),
+    db.from("fee_invoices").select("id, student_id, amount, status, due_date, description, created_at, students(first_name, last_name, admission_number)").eq("tenant_id", tenantId).order("created_at", { ascending: false }).limit(100),
+    db.from("payments").select("id, invoice_id, amount, payment_method, payment_date, reference_number, notes").eq("tenant_id", tenantId).order("payment_date", { ascending: false }).limit(50),
+    db.from("students").select("id, first_name, last_name, admission_number").eq("tenant_id", tenantId).eq("status", "active").order("last_name"),
+    db.from("classes").select("id, name").eq("tenant_id", tenantId).order("name"),
   ]);
 
   const catList = catResult.data || [];
   const structList = structResult.data || [];
   const invoiceList = invResult.data || [];
   const paymentList = payResult.data || [];
+  const studentList = students || [];
+  const classList = classes || [];
   const totalInvoiced = invoiceList.reduce((s, i) => s + (Number(i.amount) || 0), 0);
   const totalPaid = paymentList.reduce((s, p) => s + (Number(p.amount) || 0), 0);
+  const totalOutstanding = totalInvoiced - totalPaid;
 
   body.innerHTML = `
-    <div class="cards" style="margin-top:16px">
-      <div class="card"><h3>Fee Categories</h3><p style="font-size:24px">${catList.length}</p></div>
-      <div class="card"><h3>Fee Structures</h3><p style="font-size:24px">${structList.length}</p></div>
-      <div class="card"><h3>Total Invoiced</h3><p style="font-size:24px">$${totalInvoiced.toLocaleString()}</p></div>
-      <div class="card"><h3>Total Paid</h3><p style="font-size:24px;color:var(--secondary)">$${totalPaid.toLocaleString()}</p></div>
+    <div class="tabs subtabs">
+      <a href="#" class="tab active" data-sub="overview">Overview</a>
+      <a href="#" class="tab" data-sub="invoices">Invoices</a>
+      <a href="#" class="tab" data-sub="payments">Payments</a>
+      <a href="#" class="tab" data-sub="categories">Categories</a>
     </div>
+    <div id="fin-overview"></div>
+    <div id="fin-invoices" class="hidden"></div>
+    <div id="fin-payments" class="hidden"></div>
+    <div id="fin-categories" class="hidden"></div>`;
+
+  body.querySelectorAll("[data-sub]").forEach((a) => {
+    a.onclick = (e) => {
+      e.preventDefault();
+      body.querySelectorAll("[data-sub]").forEach((t) => t.classList.remove("active"));
+      a.classList.add("active");
+      ["overview", "invoices", "payments", "categories"].forEach((s) => {
+        body.querySelector(`#fin-${s}`).classList.toggle("hidden", a.dataset.sub !== s);
+      });
+    };
+  });
+
+  renderFinOverview(body.querySelector("#fin-overview"), totalInvoiced, totalPaid, totalOutstanding, invoiceList, paymentList);
+  renderFinInvoices(body.querySelector("#fin-invoices"), tenantId, invoiceList, studentList, catList, structList);
+  renderFinPayments(body.querySelector("#fin-payments"), tenantId, paymentList, invoiceList, studentList);
+  renderFinCategories(body.querySelector("#fin-categories"), tenantId, catList, structList, classList);
+}
+
+function renderFinOverview(container, totalInvoiced, totalPaid, totalOutstanding, invoices, payments) {
+  container.innerHTML = `
+    <div class="cards" style="margin-top:16px">
+      <article>Total Invoiced<strong>$${totalInvoiced.toLocaleString()}</strong></article>
+      <article>Total Paid<strong style="color:#14713b">$${totalPaid.toLocaleString()}</strong></article>
+      <article>Outstanding<strong style="color:#b3261e">$${totalOutstanding.toLocaleString()}</strong></article>
+      <article>Invoices<strong>${invoices.length}</strong></article>
+    </div>
+    <div class="panel" style="margin-top:16px">
+      <h2>Recent Invoices</h2>
+      ${invoices.length ? `<table class="data"><thead><tr><th>Student</th><th>Amount</th><th>Status</th><th>Due</th></tr></thead><tbody>${invoices.slice(0, 10).map((i) => `<tr>
+        <td>${esc(i.students?.first_name || "")} ${esc(i.students?.last_name || "")}</td>
+        <td>$${Number(i.amount).toLocaleString()}</td>
+        <td><span class="badge ${i.status === "paid" ? "active" : i.status === "overdue" ? "suspended" : "trial"}">${esc(i.status)}</span></td>
+        <td>${fmtDate(i.due_date)}</td>
+      </tr>`).join("")}</tbody></table>` : `<p class="muted">No invoices yet.</p>`}
+    </div>`;
+}
+
+function renderFinInvoices(container, tenantId, invoices, students, categories, structures) {
+  const studentOptions = students.map((s) => `<option value="${s.id}">${esc(s.first_name)} ${esc(s.last_name)} (${esc(s.admission_number)})</option>`).join("");
+  const catOptions = categories.map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join("");
+  container.innerHTML = `
+    <div class="panel" style="margin-top:16px">
+      <div class="panel-head"><h2>Invoices</h2>
+        <div class="actions">
+          <button id="new-invoice-btn" class="primary">New Invoice</button>
+          <button id="bulk-invoice-btn" class="secondary">Bulk Invoice by Category</button>
+        </div>
+      </div>
+      <div id="invoice-form-area"></div>
+      <div id="invoice-table">
+        ${invoices.length ? `<table class="data"><thead><tr><th>Student</th><th>Amount</th><th>Status</th><th>Due</th><th>Description</th><th></th></tr></thead><tbody>${invoices.map((i) => `<tr>
+          <td>${esc(i.students?.first_name || "")} ${esc(i.students?.last_name || "")} (${esc(i.students?.admission_number || "")})</td>
+          <td>$${Number(i.amount).toLocaleString()}</td>
+          <td><span class="badge ${i.status === "paid" ? "active" : i.status === "overdue" ? "suspended" : "trial"}">${esc(i.status)}</span></td>
+          <td>${fmtDate(i.due_date)}</td>
+          <td>${esc(i.description || "—")}</td>
+          <td>${i.status !== "paid" ? `<button class="link mark-paid" data-id="${i.id}" data-amount="${i.amount}">Mark Paid</button>` : ""}</td>
+        </tr>`).join("")}</tbody></table>` : `<p class="muted">No invoices yet. Create one above.</p>`}
+      </div>
+    </div>`;
+
+  container.querySelector("#new-invoice-btn").onclick = () => {
+    const area = container.querySelector("#invoice-form-area");
+    area.innerHTML = `
+      <div class="panel" style="margin-top:16px;border:2px solid var(--secondary)">
+        <div class="panel-head"><h2>New Invoice</h2><button class="link" id="cancel-inv">Cancel</button></div>
+        <form id="inv-form" class="grid">
+          <label>Student<select name="student_id" required><option value="">Select student…</option>${studentOptions}</select></label>
+          <label>Amount ($)<input type="number" name="amount" min="0" step="0.01" required></label>
+          <label>Due date<input type="date" name="due_date" required></label>
+          <label>Description<input name="description" placeholder="e.g. Term 1 Tuition"></label>
+          <div><button type="submit" class="primary">Create Invoice</button></div>
+        </form>
+        <p id="inv-msg" role="status"></p>
+      </div>`;
+    area.querySelector("#cancel-inv").onclick = () => { area.innerHTML = ""; };
+    area.querySelector("#inv-form").onsubmit = async (e) => {
+      e.preventDefault();
+      const fd = new FormData(e.target);
+      const msg = area.querySelector("#inv-msg");
+      const { error } = await db.from("fee_invoices").insert({
+        tenant_id: tenantId, student_id: fd.get("student_id"), amount: Number(fd.get("amount")),
+        due_date: fd.get("due_date"), description: fd.get("description") || null, status: "pending",
+      });
+      msg.textContent = error ? safeError(error) : "Invoice created.";
+      if (!error) { area.innerHTML = ""; setTimeout(() => renderFinance(container.closest("#school-body"), tenantId), 500); }
+    };
+  };
+
+  container.querySelector("#bulk-invoice-btn").onclick = () => {
+    const area = container.querySelector("#invoice-form-area");
+    area.innerHTML = `
+      <div class="panel" style="margin-top:16px;border:2px solid var(--secondary)">
+        <div class="panel-head"><h2>Bulk Invoice by Category</h2><button class="link" id="cancel-bulk">Cancel</button></div>
+        <form id="bulk-form" class="grid">
+          <label>Fee Category<select name="category_id" required><option value="">Select…</option>${catOptions}</select></label>
+          <label>Due date<input type="date" name="due_date" required></label>
+          <div><button type="submit" class="primary">Invoice All Students</button></div>
+        </form>
+        <p id="bulk-msg" role="status"></p>
+      </div>`;
+    area.querySelector("#cancel-bulk").onclick = () => { area.innerHTML = ""; };
+    area.querySelector("#bulk-form").onsubmit = async (e) => {
+      e.preventDefault();
+      const fd = new FormData(e.target);
+      const msg = area.querySelector("#bulk-msg");
+      const catId = fd.get("category_id");
+      const dueDate = fd.get("due_date");
+      const structure = structures.find((s) => s.category_id === catId);
+      if (!structure) { msg.textContent = "No fee structure found for this category. Create one in Categories first."; return; }
+      msg.innerHTML = `<span class="spinner sm"></span> Creating invoices…`;
+      let created = 0;
+      for (const s of students) {
+        const { data: existing } = await db.from("fee_invoices").select("id").eq("tenant_id", tenantId).eq("student_id", s.id).eq("status", "pending").maybeSingle();
+        if (existing) continue;
+        const { error } = await db.from("fee_invoices").insert({
+          tenant_id: tenantId, student_id: s.id, amount: structure.amount, due_date: dueDate,
+          description: structure.fee_categories?.name || "Fee", status: "pending",
+        });
+        if (!error) created++;
+      }
+      msg.textContent = `Created ${created} invoice(s).`;
+      setTimeout(() => renderFinance(container.closest("#school-body"), tenantId), 1000);
+    };
+  };
+
+  container.querySelectorAll(".mark-paid").forEach((btn) => {
+    btn.onclick = () => openPaymentModal(tenantId, btn.dataset.id, Number(btn.dataset.amount), () => renderFinance(container.closest("#school-body"), tenantId));
+  });
+}
+
+function openPaymentModal(tenantId, invoiceId, invoiceAmount, onDone) {
+  const overlay = document.createElement("div");
+  overlay.className = "modal";
+  overlay.innerHTML = `<div style="max-width:420px">
+    <h2>Record Payment</h2>
+    <form id="pay-form" class="grid">
+      <label>Amount ($)<input type="number" name="amount" min="0" step="0.01" value="${invoiceAmount}" required></label>
+      <label>Payment method<select name="payment_method"><option>cash</option><option>bank_transfer</option><option>mobile_money</option><option>card</option><option>other</option></select></label>
+      <label>Payment date<input type="date" name="payment_date" value="${new Date().toISOString().slice(0, 10)}" required></label>
+      <label>Reference #<input name="reference_number" placeholder="optional"></label>
+      <label>Notes<textarea name="notes" rows="2" placeholder="optional"></textarea></label>
+      <div><button type="submit" class="primary">Save Payment</button> <button type="button" class="link" id="cancel-pay">Cancel</button></div>
+    </form>
+    <p id="pay-msg" role="status"></p>
+  </div>`;
+  document.body.appendChild(overlay);
+  overlay.querySelector("#cancel-pay").onclick = () => overlay.remove();
+  overlay.querySelector("#pay-form").onsubmit = async (e) => {
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    const msg = overlay.querySelector("#pay-msg");
+    const { error: payErr } = await db.from("payments").insert({
+      tenant_id: tenantId, invoice_id: invoiceId, amount: Number(fd.get("amount")),
+      payment_method: fd.get("payment_method"), payment_date: fd.get("payment_date"),
+      reference_number: fd.get("reference_number") || null, notes: fd.get("notes") || null,
+    });
+    if (payErr) { msg.textContent = safeError(payErr); return; }
+    await db.from("fee_invoices").update({ status: "paid" }).eq("id", invoiceId);
+    overlay.remove();
+    toast("Payment recorded");
+    onDone && onDone();
+  };
+}
+
+function renderFinPayments(container, tenantId, payments, invoices, students) {
+  container.innerHTML = `
+    <div class="panel" style="margin-top:16px">
+      <div class="panel-head"><h2>Payments</h2></div>
+      ${payments.length ? `<table class="data"><thead><tr><th>Date</th><th>Amount</th><th>Method</th><th>Reference</th><th>Notes</th></tr></thead><tbody>${payments.map((p) => `<tr>
+        <td>${fmtDate(p.payment_date)}</td>
+        <td>$${Number(p.amount).toLocaleString()}</td>
+        <td><span class="badge">${esc(p.payment_method)}</span></td>
+        <td>${esc(p.reference_number || "—")}</td>
+        <td>${esc(p.notes || "—")}</td>
+      </tr>`).join("")}</tbody></table>` : `<p class="muted">No payments recorded yet.</p>`}
+    </div>`;
+}
+
+function renderFinCategories(container, tenantId, categories, structures, classes) {
+  container.innerHTML = `
     <div class="panel" style="margin-top:16px">
       <div class="panel-head"><h2>Fee Categories</h2>
         <button id="add-cat-btn" class="primary">New Category</button>
       </div>
-      <table class="data"><thead><tr><th>Name</th><th>Description</th><th>Structures</th></tr></thead>
-      <tbody>${catList.map((c) => `<tr><td>${esc(c.name)}</td><td>${esc(c.description || "—")}</td><td>${structList.filter((s) => s.category_id === c.id).length}</td></tr>`).join("") || '<tr><td colspan="3" class="muted">No fee categories.</td></tr>'}</tbody></table>
+      <table class="data"><thead><tr><th>Name</th><th>Description</th><th>Structures</th><th></th></tr></thead>
+      <tbody>${categories.map((c) => {
+        const structs = structures.filter((s) => s.category_id === c.id);
+        return `<tr><td>${esc(c.name)}</td><td>${esc(c.description || "—")}</td><td>${structs.length}</td><td><button class="link add-struct" data-cat="${c.id}">+ Structure</button></td></tr>`;
+      }).join("") || '<tr><td colspan="4" class="muted">No fee categories.</td></tr>'}</tbody></table>
     </div>
-    <div class="panel" style="margin-top:16px">
-      <div class="panel-head"><h2>Recent Invoices</h2></div>
-      <table class="data"><thead><tr><th>Student</th><th>Amount</th><th>Status</th><th>Due</th></tr></thead>
-      <tbody>${invoiceList.map((i) => `<tr><td>${esc(i.students?.first_name || "")} ${esc(i.students?.last_name || "")} (${esc(i.students?.admission_number || "")})</td><td>$${Number(i.amount).toLocaleString()}</td><td><span class="badge ${i.status === "paid" ? "active" : i.status === "overdue" ? "suspended" : "trial"}">${esc(i.status)}</span></td><td>${fmtDate(i.due_date)}</td></tr>`).join("") || '<tr><td colspan="4" class="muted">No invoices yet.</td></tr>'}</tbody></table>
-    </div>
-    <div id="finance-form-area"></div>`;
+    <div id="cat-form-area"></div>`;
 
-  body.querySelector("#add-cat-btn").onclick = () => {
-    const area = body.querySelector("#finance-form-area");
+  container.querySelector("#add-cat-btn").onclick = () => {
+    const area = container.querySelector("#cat-form-area");
     area.innerHTML = `
       <div class="panel" style="margin-top:16px">
         <div class="panel-head"><h2>New Fee Category</h2></div>
@@ -1640,7 +2007,38 @@ async function renderFinance(body, tenantId) {
       const fd = new FormData(e.target);
       const { error } = await db.from("fee_categories").insert({ tenant_id: tenantId, name: fd.get("name").trim(), description: fd.get("description").trim() || null });
       area.querySelector("#cat-msg").textContent = error ? safeError(error) : "Category created.";
-      if (!error) setTimeout(() => renderFinance(body, tenantId), 500);
+      if (!error) setTimeout(() => renderFinance(container.closest("#school-body"), tenantId), 500);
     };
   };
+
+  container.querySelectorAll(".add-struct").forEach((btn) => {
+    btn.onclick = () => {
+      const area = container.querySelector("#cat-form-area");
+      const catId = btn.dataset.cat;
+      const catName = categories.find((c) => c.id === catId)?.name || "";
+      const classOpts = classes.map((c) => `<option value="${c.name}">${esc(c.name)}</option>`).join("");
+      area.innerHTML = `
+        <div class="panel" style="margin-top:16px">
+          <div class="panel-head"><h2>New Fee Structure — ${esc(catName)}</h2></div>
+          <form id="struct-form" class="grid">
+            <label>Amount ($)<input type="number" name="amount" min="0" step="0.01" required></label>
+            <label>Currency<input name="currency" value="USD"></label>
+            <label>Grade / Form<select name="grade_or_form"><option value="">All</option>${classOpts}</select></label>
+            <div><button type="submit" class="primary">Save</button> <button type="button" class="link" id="cancel-struct">Cancel</button></div>
+          </form>
+          <p id="struct-msg" role="status"></p>
+        </div>`;
+      area.querySelector("#cancel-struct").onclick = () => { area.innerHTML = ""; };
+      area.querySelector("#struct-form").onsubmit = async (e) => {
+        e.preventDefault();
+        const fd = new FormData(e.target);
+        const { error } = await db.from("fee_structures").insert({
+          tenant_id: tenantId, category_id: catId, amount: Number(fd.get("amount")),
+          currency: fd.get("currency") || "USD", grade_or_form: fd.get("grade_or_form") || null,
+        });
+        area.querySelector("#struct-msg").textContent = error ? safeError(error) : "Structure created.";
+        if (!error) setTimeout(() => renderFinance(container.closest("#school-body"), tenantId), 500);
+      };
+    };
+  });
 }

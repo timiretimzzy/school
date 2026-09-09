@@ -121,6 +121,18 @@ input:focus,select:focus,textarea:focus{outline:2px solid var(--secondary);outli
 .confirm-modal .modal p{margin:16px 0;font-size:15px}
 .confirm-modal .modal .actions{display:flex;gap:10px;justify-content:center;margin-top:20px}
 
+/* Print styles */
+@media print{
+  body *{visibility:hidden}
+  .modal,.toast,.hamburger,.sidebar-overlay{display:none!important}
+  aside,header,#login-screen{display:none!important}
+  main{padding:0;max-width:100%}
+  #app,#app *{visibility:visible}
+  #app{position:absolute;left:0;top:0;width:100%}
+  .panel{border:none;box-shadow:none;padding:10px}
+  .tabs,.subtabs,.actions,button,.wizard-nav{display:none!important}
+}
+
 @media(max-width:800px){
   .hamburger{display:flex}
   aside{position:fixed;left:-280px;top:0;bottom:0;width:260px;z-index:20;transition:left .25s ease;overflow-y:auto}

@@ -306,12 +306,19 @@ Deno.serve(async (request) => {
 });
 
 function generateRandomPassword(): string {
-  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789!@#$%";
-  let pwd = "A"; // guarantee uppercase
-  for (let i = 1; i < 12; i++) {
-    pwd += chars[Math.floor(Math.random() * chars.length)];
+  const upper = "ABCDEFGHJKLMNPQRSTUVWXYZ";
+  const lower = "abcdefghjkmnpqrstuvwxyz";
+  const digits = "23456789";
+  const specials = "!@#$%";
+  const all = upper + lower + digits + specials;
+  const arr = new Uint8Array(12);
+  crypto.getRandomValues(arr);
+  let pwd = upper[arr[0] % upper.length];
+  pwd += lower[arr[1] % lower.length];
+  pwd += digits[arr[2] % digits.length];
+  pwd += specials[arr[3] % specials.length];
+  for (let i = 4; i < 12; i++) {
+    pwd += all[arr[i] % all.length];
   }
-  // guarantee digit and special char
-  pwd += "1!";
   return pwd;
 }

@@ -23,6 +23,23 @@ function getCorsHeaders(request: Request): Record<string, string> {
 const json = (body: unknown, status = 200, corsHeaders: Record<string, string> = {}) =>
   new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json", ...corsHeaders } });
 
+// Rate limiting for accept-invitation
+const rateLimitMap = new Map<string, { count: number; resetAt: number }>();
+const RATE_LIMIT_MAX = 10;
+const RATE_LIMIT_WINDOW_MS = 60_000;
+
+function checkRateLimit(ip: string): boolean {
+  const now = Date.now();
+  const entry = rateLimitMap.get(ip);
+  if (!entry || now > entry.resetAt) {
+    rateLimitMap.set(ip, { count: 1, resetAt: now + RATE_LIMIT_WINDOW_MS });
+    return true;
+  }
+  if (entry.count >= RATE_LIMIT_MAX) return false;
+  entry.count++;
+  return true;
+}
+
 async function hash(raw: string) {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(raw));
   return Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, "0")).join("");
@@ -36,6 +53,10 @@ Deno.serve(async (request) => {
   const corsHeaders = getCorsHeaders(request);
   if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: corsHeaders });
   if (request.method !== "POST") return json({ error: "method_not_allowed" }, 405, corsHeaders);
+
+  const ip = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "unknown";
+  if (!checkRateLimit(ip)) return json({ error: "rate_limited" }, 429, corsHeaders);
+
   const authToken = request.headers.get("authorization")?.replace("Bearer ", "");
   if (!authToken) return json({ error: "unauthenticated" }, 401, corsHeaders);
   const caller = await admin.auth.getUser(authToken);

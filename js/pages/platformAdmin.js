@@ -123,30 +123,45 @@ async function renderSchools(body) {
         <p>${(members.data || []).map((m) => `<span class="badge">${esc(m.role)}${m.active ? "" : " (inactive)"}</span>`).join(" ") || "<span class=\"muted\">No members yet — invitation may be pending.</span>"}</p>
         <p id="detail-msg" role="status"></p>
       </div>`;
-    detail.querySelector("[data-act=edit]").onclick = async () => {
-      const name = prompt("School name", tenant.name);
-      if (name === null) return;
-      const { error } = await db.from("tenants").update({ name }).eq("id", tenant.id);
-      detail.querySelector("#detail-msg").textContent = error ? safeError(error) : "Updated.";
-      if (!error) {
-        tenant.name = name;
+    detail.querySelector("[data-act=edit]").onclick = () => {
+      const overlay = document.createElement("div");
+      overlay.className = "modal";
+      overlay.innerHTML = `<div style="max-width:400px">
+        <h3>Edit school name</h3>
+        <form id="edit-name-form" class="grid">
+          <label>School name<input id="edit-name-input" value="${esc(tenant.name)}" required></label>
+          <div style="display:flex;gap:8px"><button type="submit" class="primary">Save</button><button type="button" class="link" id="cancel-edit">Cancel</button></div>
+        </form>
+      </div>`;
+      document.body.appendChild(overlay);
+      overlay.querySelector("#cancel-edit").onclick = () => overlay.remove();
+      overlay.querySelector("#edit-name-form").onsubmit = async (e) => {
+        e.preventDefault();
+        const name = overlay.querySelector("#edit-name-input").value.trim();
+        if (!name) return;
+        const { error } = await db.from("tenants").update({ name }).eq("id", tenant.id);
+        overlay.remove();
+        detail.querySelector("#detail-msg").textContent = error ? safeError(error) : "Updated.";
+        if (!error) { tenant.name = name; load(search.value.trim()); renderDetail(tenant); }
+      };
+    };
+    detail.querySelector("[data-act=suspend]").onclick = () => {
+      confirmAction("Suspend school?", "This will prevent all users from logging in.", async () => {
+        const { error } = await db.from("tenants").update({ status: "suspended" }).eq("id", tenant.id);
+        if (!error) tenant.status = "suspended";
+        detail.querySelector("#detail-msg").textContent = error ? safeError(error) : "School suspended.";
         load(search.value.trim());
         renderDetail(tenant);
-      }
+      });
     };
-    detail.querySelector("[data-act=suspend]").onclick = async () => {
-      const { error } = await db.from("tenants").update({ status: "suspended" }).eq("id", tenant.id);
-      if (!error) tenant.status = "suspended";
-      detail.querySelector("#detail-msg").textContent = error ? safeError(error) : "School suspended.";
-      load(search.value.trim());
-      renderDetail(tenant);
-    };
-    detail.querySelector("[data-act=activate]").onclick = async () => {
-      const { error } = await db.from("tenants").update({ status: "active" }).eq("id", tenant.id);
-      if (!error) tenant.status = "active";
-      detail.querySelector("#detail-msg").textContent = error ? safeError(error) : "School activated.";
-      load(search.value.trim());
-      renderDetail(tenant);
+    detail.querySelector("[data-act=activate]").onclick = () => {
+      confirmAction("Activate school?", "This will restore access for all users.", async () => {
+        const { error } = await db.from("tenants").update({ status: "active" }).eq("id", tenant.id);
+        if (!error) tenant.status = "active";
+        detail.querySelector("#detail-msg").textContent = error ? safeError(error) : "School activated.";
+        load(search.value.trim());
+        renderDetail(tenant);
+      });
     };
     detail.querySelector("#sub-status").onchange = async (e) => {
       const { error } = await db.from("tenants").update({ subscription_status: e.target.value }).eq("id", tenant.id);

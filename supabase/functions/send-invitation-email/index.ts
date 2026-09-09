@@ -10,10 +10,28 @@ const SITE_URL = Deno.env.get("SITE_URL") || "https://timiretimzzy.github.io/sch
 const FROM_EMAIL = Deno.env.get("FROM_EMAIL") || "noreply@edustack.app";
 const FROM_NAME = Deno.env.get("FROM_NAME") || "EduStack";
 
-const response = (body: unknown, status = 200) =>
+const ALLOWED_ORIGINS = [
+  "https://timiretimzzy.github.io",
+  "https://school-kohl-two.vercel.app",
+  "http://localhost:8080",
+  "http://localhost:3000",
+];
+
+function getCorsHeaders(request: Request): Record<string, string> {
+  const origin = request.headers.get("origin") || "";
+  const allowed = ALLOWED_ORIGINS.includes(origin) ? origin : ALLOWED_ORIGINS[0];
+  return {
+    "Access-Control-Allow-Origin": allowed,
+    "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+    "Access-Control-Allow-Methods": "POST, OPTIONS",
+    "Access-Control-Allow-Credentials": "true",
+  };
+}
+
+const response = (body: unknown, status = 200, corsHeaders: Record<string, string> = {}) =>
   new Response(JSON.stringify(body), {
     status,
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", ...corsHeaders },
   });
 
 async function sendViaResend(to: string, subject: string, html: string): Promise<boolean> {
@@ -79,19 +97,22 @@ function buildInvitationEmail(params: {
 }
 
 Deno.serve(async (request) => {
+  const corsHeaders = getCorsHeaders(request);
+  if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: corsHeaders });
+
   try {
-    if (request.method !== "POST") return response({ error: "method_not_allowed" }, 405);
+    if (request.method !== "POST") return response({ error: "method_not_allowed" }, 405, corsHeaders);
 
     const authHeader = request.headers.get("authorization")?.replace("Bearer ", "");
-    if (!authHeader) return response({ error: "unauthenticated" }, 401);
+    if (!authHeader) return response({ error: "unauthenticated" }, 401, corsHeaders);
 
     const caller = await admin.auth.getUser(authHeader);
-    if (caller.error || !caller.data.user) return response({ error: "unauthenticated" }, 401);
+    if (caller.error || !caller.data.user) return response({ error: "unauthenticated" }, 401, corsHeaders);
 
     const input = await request.json().catch(() => ({}));
 
     if (typeof input.invitation_id !== "string") {
-      return response({ error: "invalid_input" }, 400);
+      return response({ error: "invalid_input" }, 400, corsHeaders);
     }
 
     // Look up the invitation
@@ -101,8 +122,8 @@ Deno.serve(async (request) => {
       .eq("id", input.invitation_id)
       .maybeSingle();
 
-    if (invError || !invitation) return response({ error: "invitation_not_found" }, 404);
-    if (invitation.accepted_at) return response({ error: "invitation_already_accepted" }, 400);
+    if (invError || !invitation) return response({ error: "invitation_not_found" }, 404, corsHeaders);
+    if (invitation.accepted_at) return response({ error: "invitation_already_accepted" }, 400, corsHeaders);
 
     // Look up the tenant name
     const { data: tenant } = await admin
@@ -123,10 +144,17 @@ Deno.serve(async (request) => {
       ? `${inviterProfile.first_name || ""} ${inviterProfile.last_name || ""}`.trim() || "School Administrator"
       : "School Administrator";
 
-    // Generate a raw token for the acceptance URL
-    // Since we only store hashes, we need to generate a new token for email delivery
-    // The user will need to use the accept-invitation flow with this token
-    const raw = crypto.randomUUID() + crypto.randomUUID();
+    // Generate a new raw token and update the stored hash so the acceptance URL
+    // always matches. This replaces any previously issued token.
+    const raw = crypto.randomUUID();
+    const tokenHash = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(raw)).then(
+      (buf) => Array.from(new Uint8Array(buf)).map((b) => b.toString(16).padStart(2, "0")).join("")
+    );
+    await admin
+      .from("tenant_invitations")
+      .update({ token_hash: tokenHash })
+      .eq("id", invitation.id);
+
     const acceptanceUrl = `${SITE_URL}/#/accept-invite?token=${raw}`;
 
     const emailHtml = buildInvitationEmail({
@@ -166,9 +194,9 @@ Deno.serve(async (request) => {
         ? "Invitation email sent successfully."
         : "Email provider not configured. Please share the invitation link manually.",
       acceptance_url: acceptanceUrl,
-    });
+    }, 200, corsHeaders);
   } catch (err) {
     console.error("Edge Function error:", err);
-    return response({ error: "internal_error" }, 500);
+    return response({ error: "internal_error" }, 500, corsHeaders);
   }
 });
