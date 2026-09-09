@@ -560,7 +560,7 @@ function showStudentForm(tenantId, onSaved, existing, onUpdated) {
         tenant_id: tenantId,
         email: email,
         role: "student",
-        password: fd.get("password") || "TempPass123!",
+        password: fd.get("password"),
       },
     });
     if (error) {
@@ -579,7 +579,6 @@ function showStudentForm(tenantId, onSaved, existing, onUpdated) {
       <p class="muted">Share these credentials with the student:</p>
       <div style="background:#f4f7fb;padding:16px;border-radius:8px;margin:12px 0;font-family:monospace;font-size:16px">
         <div><strong>Login ID:</strong> <span id="login-id-display">${esc(loginId)}</span> <button type="button" class="link" onclick="navigator.clipboard.writeText('${esc(loginId)}')">Copy</button></div>
-        <div><strong>Default Password:</strong> <span id="password-display">${esc(data.default_password)}</span> <button type="button" class="link" onclick="navigator.clipboard.writeText('${esc(data.default_password)}')">Copy</button></div>
       </div>
       <p class="muted small">The student must change their password on first login.</p>
     </div>`;
@@ -686,7 +685,7 @@ async function renderStaff(body, tenantId) {
         tenant_id: tenantId,
         email: email,
         role: "teacher",
-        password: fd.get("password") || "TempPass123!",
+        password: fd.get("password"),
       },
     });
     if (error) {
@@ -705,7 +704,6 @@ async function renderStaff(body, tenantId) {
       <p class="muted">Share these credentials with the teacher:</p>
       <div style="background:#f4f7fb;padding:16px;border-radius:8px;margin:12px 0;font-family:monospace;font-size:16px">
         <div><strong>Login ID:</strong> <span>${esc(loginId)}</span> <button type="button" class="link" onclick="navigator.clipboard.writeText('${esc(loginId)}')">Copy</button></div>
-        <div><strong>Default Password:</strong> <span>${esc(data.default_password)}</span> <button type="button" class="link" onclick="navigator.clipboard.writeText('${esc(data.default_password)}')">Copy</button></div>
       </div>
       <p class="muted small">The teacher must change their password on first login.</p>
     </div>`;
@@ -1029,7 +1027,6 @@ async function importStaffCsv(tenantId, listEl, onReload) {
             tenant_id: tenantId,
             email: record.email,
             role: "teacher",
-            password: "TempPass123!",
           },
         });
         if (error || !data?.login_id) {
@@ -1246,7 +1243,6 @@ async function importStudentsCsv(tenantId, listEl, onReload) {
             tenant_id: tenantId,
             email: record.email,
             role: "student",
-            password: "TempPass123!",
           },
         });
         if (error || !data?.login_id) {

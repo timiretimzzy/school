@@ -1,8 +1,27 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const admin = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
-const json = (body: unknown, status = 200) =>
-  new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+
+const ALLOWED_ORIGINS = [
+  "https://timiretimzzy.github.io",
+  "https://school-kohl-two.vercel.app",
+  "http://localhost:8080",
+  "http://localhost:3000",
+];
+
+function getCorsHeaders(request: Request): Record<string, string> {
+  const origin = request.headers.get("origin") || "";
+  const allowed = ALLOWED_ORIGINS.includes(origin) ? origin : ALLOWED_ORIGINS[0];
+  return {
+    "Access-Control-Allow-Origin": allowed,
+    "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+    "Access-Control-Allow-Methods": "POST, OPTIONS",
+    "Access-Control-Allow-Credentials": "true",
+  };
+}
+
+const json = (body: unknown, status = 200, corsHeaders: Record<string, string> = {}) =>
+  new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json", ...corsHeaders } });
 
 async function hash(raw: string) {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(raw));
@@ -14,14 +33,16 @@ async function hash(raw: string) {
 // optionally links a student/parent profile. Must run with the service role
 // because granting membership is a privileged, cross-tenant operation.
 Deno.serve(async (request) => {
-  if (request.method !== "POST") return json({ error: "method_not_allowed" }, 405);
+  const corsHeaders = getCorsHeaders(request);
+  if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: corsHeaders });
+  if (request.method !== "POST") return json({ error: "method_not_allowed" }, 405, corsHeaders);
   const authToken = request.headers.get("authorization")?.replace("Bearer ", "");
-  if (!authToken) return json({ error: "unauthenticated" }, 401);
+  if (!authToken) return json({ error: "unauthenticated" }, 401, corsHeaders);
   const caller = await admin.auth.getUser(authToken);
-  if (caller.error || !caller.data.user) return json({ error: "unauthenticated" }, 401);
+  if (caller.error || !caller.data.user) return json({ error: "unauthenticated" }, 401, corsHeaders);
 
   const input = await request.json().catch(() => ({}));
-  if (typeof input.token !== "string" || input.token.length < 10) return json({ error: "invalid_input" }, 400);
+  if (typeof input.token !== "string" || input.token.length < 10) return json({ error: "invalid_input" }, 400, corsHeaders);
   const token_hash = await hash(input.token);
 
   const { data: invitation, error: lookupError } = await admin
@@ -29,11 +50,11 @@ Deno.serve(async (request) => {
     .select("id, tenant_id, email, role, expires_at, accepted_at, metadata")
     .eq("token_hash", token_hash)
     .maybeSingle();
-  if (lookupError || !invitation) return json({ error: "invitation_not_found" }, 404);
-  if (invitation.accepted_at) return json({ error: "invitation_already_accepted" }, 400);
-  if (new Date(invitation.expires_at).getTime() < Date.now()) return json({ error: "invitation_expired" }, 400);
+  if (lookupError || !invitation) return json({ error: "invitation_not_found" }, 404, corsHeaders);
+  if (invitation.accepted_at) return json({ error: "invitation_already_accepted" }, 400, corsHeaders);
+  if (new Date(invitation.expires_at).getTime() < Date.now()) return json({ error: "invitation_expired" }, 400, corsHeaders);
   if ((caller.data.user.email ?? "").toLowerCase() !== invitation.email.toLowerCase()) {
-    return json({ error: "email_mismatch" }, 403);
+    return json({ error: "email_mismatch" }, 403, corsHeaders);
   }
 
   const { error: membershipError } = await admin
@@ -42,7 +63,7 @@ Deno.serve(async (request) => {
       { tenant_id: invitation.tenant_id, user_id: caller.data.user.id, role: invitation.role, active: true },
       { onConflict: "tenant_id,user_id,role" },
     );
-  if (membershipError) return json({ error: "membership_failed" }, 400);
+  if (membershipError) return json({ error: "membership_failed" }, 400, corsHeaders);
 
   // For student invitations, auto-link to the student profile if the
   // invite-user function stored a student_id in the invitation metadata,
@@ -99,5 +120,5 @@ Deno.serve(async (request) => {
     entity_id: invitation.id,
   });
 
-  return json({ accepted: true, tenant_id: invitation.tenant_id, role: invitation.role });
+  return json({ accepted: true, tenant_id: invitation.tenant_id, role: invitation.role }, 200, corsHeaders);
 });

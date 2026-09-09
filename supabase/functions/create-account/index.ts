@@ -5,24 +5,38 @@ const admin = createClient(
   Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
 );
 
-const response = (body: unknown, status = 200) =>
+const ALLOWED_ORIGINS = [
+  "https://timiretimzzy.github.io",
+  "https://school-kohl-two.vercel.app",
+  "http://localhost:8080",
+  "http://localhost:3000",
+];
+
+function getCorsHeaders(request: Request): Record<string, string> {
+  const origin = request.headers.get("origin") || "";
+  const allowed = ALLOWED_ORIGINS.includes(origin) ? origin : ALLOWED_ORIGINS[0];
+  return {
+    "Access-Control-Allow-Origin": allowed,
+    "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+    "Access-Control-Allow-Methods": "POST, OPTIONS",
+    "Access-Control-Allow-Credentials": "true",
+  };
+}
+
+const response = (body: unknown, status = 200, corsHeaders: Record<string, string> = {}) =>
   new Response(JSON.stringify(body), {
     status,
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", ...corsHeaders },
   });
 
-const DEFAULT_PASSWORD_MAP: Record<string, string> = {
-  student: "Student@123!",
-  teacher: "Teacher@123!",
-  parent: "Parent@123!",
-};
-
-function getDefaultPassword(role: string): string {
-  const roleLower = role.toLowerCase();
-  if (roleLower === "student" || roleLower === "s") return DEFAULT_PASSWORD_MAP.student;
-  if (roleLower === "teacher" || roleLower === "t") return DEFAULT_PASSWORD_MAP.teacher;
-  if (roleLower === "parent" || roleLower === "p") return DEFAULT_PASSWORD_MAP.parent;
-  return "TempPass123!";
+function validatePasswordStrength(password: string): string | null {
+  if (password.length < 8) return "Password must be at least 8 characters.";
+  if (password.length > 128) return "Password must not exceed 128 characters.";
+  if (!/[A-Z]/.test(password)) return "Password must contain at least one uppercase letter.";
+  if (!/[a-z]/.test(password)) return "Password must contain at least one lowercase letter.";
+  if (!/[0-9]/.test(password)) return "Password must contain at least one digit.";
+  if (!/[^A-Za-z0-9]/.test(password)) return "Password must contain at least one special character.";
+  return null;
 }
 
 function getRolePrefix(role: string): string {
@@ -64,18 +78,24 @@ async function cleanupProfile(table: string, userId: string) {
 }
 
 Deno.serve(async (request) => {
+  const corsHeaders = getCorsHeaders(request);
+
+  if (request.method === "OPTIONS") {
+    return new Response(null, { status: 204, headers: corsHeaders });
+  }
+
   try {
     const authHeader = request.headers.get("authorization")?.replace("Bearer ", "");
-    if (!authHeader) return response({ error: "unauthenticated" }, 401);
+    if (!authHeader) return response({ error: "unauthenticated" }, 401, corsHeaders);
 
     const caller = await admin.auth.getUser(authHeader);
-    if (caller.error || !caller.data.user) return response({ error: "unauthenticated" }, 401);
+    if (caller.error || !caller.data.user) return response({ error: "unauthenticated" }, 401, corsHeaders);
 
     const callerId = caller.data.user.id;
     const input = await request.json().catch(() => ({}));
 
     if (typeof input.tenant_id !== "string" || typeof input.email !== "string" || typeof input.role !== "string") {
-      return response({ error: "invalid_input" }, 400);
+      return response({ error: "invalid_input" }, 400, corsHeaders);
     }
 
     const email = input.email.trim().toLowerCase();
@@ -96,42 +116,44 @@ Deno.serve(async (request) => {
       .maybeSingle();
 
     if (!membership && !platformAdmin) {
-      return response({ error: "forbidden" }, 403);
+      return response({ error: "forbidden" }, 403, corsHeaders);
     }
 
     const SCHOOL_ROLES = ["school_admin", "principal", "registrar", "teacher", "finance_officer", "librarian", "parent", "student"];
     if (!platformAdmin && !SCHOOL_ROLES.includes(input.role)) {
-      return response({ error: "forbidden" }, 403);
+      return response({ error: "forbidden" }, 403, corsHeaders);
     }
 
-    const defaultPassword = getDefaultPassword(input.role);
-    const password = input.password || defaultPassword;
+    // Generate a random password if none provided
+    const password = input.password || generateRandomPassword();
+    const validationError = validatePasswordStrength(password);
+    if (validationError) {
+      return response({ error: validationError }, 400, corsHeaders);
+    }
 
-    const { data: userList, error: listErr } = await admin.auth.admin.listUsers();
-    if (listErr) return response({ error: "user_lookup_failed", details: listErr.message }, 500);
-
-    const existingUser = userList.users.find((u) => u.email === email);
-
+    // Check for existing user by email using a targeted sign-in attempt
+    // instead of listing all users (O(n) performance issue)
     let user;
     let authUserCreated = false;
 
-    if (existingUser) {
-      user = existingUser;
-      try {
-        await admin.auth.admin.updateUserById(user.id, { password });
-      } catch (err) {
-        console.error("Failed to update existing user password:", err);
+    // Try to create the user first — if email already exists, Supabase will error
+    const { data: newUser, error: createError } = await admin.auth.admin.createUser({
+      email,
+      password,
+      email_confirm: true,
+    });
+
+    if (createError) {
+      if (createError.message?.includes("already been registered")) {
+        // User exists — we cannot safely update their password here
+        // without knowing their current one. Return a specific error.
+        return response({ error: "email_already_registered", message: "A user with this email already exists. Use the invitation flow instead." }, 409, corsHeaders);
       }
-    } else {
-      const { data: newUser, error: createError } = await admin.auth.admin.createUser({
-        email,
-        password,
-        email_confirm: true,
-      });
-      if (createError) return response({ error: "user_creation_failed", details: createError.message }, 400);
-      user = newUser.user;
-      authUserCreated = true;
+      return response({ error: "user_creation_failed" }, 400, corsHeaders);
     }
+
+    user = newUser.user;
+    authUserCreated = true;
 
     let loginId;
     try {
@@ -140,12 +162,12 @@ Deno.serve(async (request) => {
       });
       if (rpcError) {
         if (authUserCreated) await cleanupAuthUser(user.id);
-        return response({ error: "login_id_generation_failed" }, 400);
+        return response({ error: "login_id_generation_failed" }, 400, corsHeaders);
       }
       loginId = rpcData;
     } catch (err) {
       if (authUserCreated) await cleanupAuthUser(user.id);
-      return response({ error: "login_id_generation_error" }, 500);
+      return response({ error: "login_id_generation_error" }, 500, corsHeaders);
     }
 
     let profileTable: string | null = null;
@@ -161,7 +183,7 @@ Deno.serve(async (request) => {
         .limit(1);
       if (maxAdmErr) {
         if (authUserCreated) await cleanupAuthUser(user.id);
-        return response({ error: "admission_number_query_failed", details: maxAdmErr.message }, 500);
+        return response({ error: "admission_number_query_failed" }, 500, corsHeaders);
       }
       const nextNum = maxAdm && maxAdm[0]?.admission_number
         ? extractNumber(maxAdm[0].admission_number) + 1
@@ -182,7 +204,7 @@ Deno.serve(async (request) => {
         }, { onConflict: "id" });
       if (profileError) {
         if (authUserCreated) await cleanupAuthUser(user.id);
-        return response({ error: "profile_creation_failed", details: profileError.message }, 400);
+        return response({ error: "profile_creation_failed" }, 400, corsHeaders);
       }
     } else if (input.role === "teacher") {
       profileTable = "staff_profiles";
@@ -195,7 +217,7 @@ Deno.serve(async (request) => {
         .limit(1);
       if (maxEmpErr) {
         if (authUserCreated) await cleanupAuthUser(user.id);
-        return response({ error: "employee_number_query_failed", details: maxEmpErr.message }, 500);
+        return response({ error: "employee_number_query_failed" }, 500, corsHeaders);
       }
       const nextNum = maxEmp && maxEmp[0]?.employee_number
         ? extractNumber(maxEmp[0].employee_number) + 1
@@ -218,7 +240,7 @@ Deno.serve(async (request) => {
         }, { onConflict: "id" });
       if (profileError) {
         if (authUserCreated) await cleanupAuthUser(user.id);
-        return response({ error: "profile_creation_failed", details: profileError.message }, 400);
+        return response({ error: "profile_creation_failed" }, 400, corsHeaders);
       }
     } else if (input.role === "parent") {
       profileTable = "parent_profiles";
@@ -235,7 +257,7 @@ Deno.serve(async (request) => {
         }, { onConflict: "id" });
       if (profileError) {
         if (authUserCreated) await cleanupAuthUser(user.id);
-        return response({ error: "profile_creation_failed", details: profileError.message }, 400);
+        return response({ error: "profile_creation_failed" }, 400, corsHeaders);
       }
     }
 
@@ -255,7 +277,7 @@ Deno.serve(async (request) => {
     if (membershipError) {
       if (profileTable) await cleanupProfile(profileTable, user.id);
       if (authUserCreated) await cleanupAuthUser(user.id);
-      return response({ error: "membership_creation_failed" }, 400);
+      return response({ error: "membership_creation_failed" }, 400, corsHeaders);
     }
 
     await admin.from("audit_logs").insert({
@@ -267,11 +289,7 @@ Deno.serve(async (request) => {
       after_data: { email, role: input.role, login_id: loginId, must_change_password: true },
     });
 
-    const isTesting =
-      Deno.env.get("ENVIRONMENT") === "development" ||
-      Deno.env.get("ENVIRONMENT") === "test";
-
-    const responseBody: Record<string, unknown> = {
+    return response({
       success: true,
       user_id: user.id,
       login_id: loginId,
@@ -280,20 +298,20 @@ Deno.serve(async (request) => {
       tenant_id: input.tenant_id,
       must_change_password: true,
       message: "Account created successfully. The user must change their password on first login.",
-      default_password: password,
-    };
-
-    if (isTesting) {
-      responseBody.testing_delivery = true;
-    }
-
-    if (password !== (input.password || "")) {
-      responseBody.password_updated = true;
-    }
-
-    return response(responseBody);
+    }, 200, corsHeaders);
   } catch (err) {
     console.error("Edge Function error:", err);
-    return response({ error: "internal_error", details: String(err) }, 500);
+    return response({ error: "internal_error" }, 500, corsHeaders);
   }
 });
+
+function generateRandomPassword(): string {
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789!@#$%";
+  let pwd = "A"; // guarantee uppercase
+  for (let i = 1; i < 12; i++) {
+    pwd += chars[Math.floor(Math.random() * chars.length)];
+  }
+  // guarantee digit and special char
+  pwd += "1!";
+  return pwd;
+}

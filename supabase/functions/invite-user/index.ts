@@ -2,10 +2,28 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const admin = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
 
-const response = (body: unknown, status = 200) =>
+const ALLOWED_ORIGINS = [
+  "https://timiretimzzy.github.io",
+  "https://school-kohl-two.vercel.app",
+  "http://localhost:8080",
+  "http://localhost:3000",
+];
+
+function getCorsHeaders(request: Request): Record<string, string> {
+  const origin = request.headers.get("origin") || "";
+  const allowed = ALLOWED_ORIGINS.includes(origin) ? origin : ALLOWED_ORIGINS[0];
+  return {
+    "Access-Control-Allow-Origin": allowed,
+    "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+    "Access-Control-Allow-Methods": "POST, OPTIONS",
+    "Access-Control-Allow-Credentials": "true",
+  };
+}
+
+const response = (body: unknown, status = 200, corsHeaders: Record<string, string> = {}) =>
   new Response(JSON.stringify(body), {
     status,
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", ...corsHeaders },
   });
 
 // SHA-256 hex digest, matching the hashing scheme used by accept-invitation.
@@ -15,18 +33,21 @@ async function hashToken(raw: string) {
 }
 
 Deno.serve(async (request) => {
-  // Authenticate the caller via their Supabase access token.
+  const corsHeaders = getCorsHeaders(request);
+  if (request.method === "OPTIONS") {
+    return new Response(null, { status: 204, headers: corsHeaders });
+  }
+
   const authHeader = request.headers.get("authorization")?.replace("Bearer ", "");
-  if (!authHeader) return response({ error: "unauthenticated" }, 401);
+  if (!authHeader) return response({ error: "unauthenticated" }, 401, corsHeaders);
 
   const caller = await admin.auth.getUser(authHeader);
-  if (caller.error || !caller.data.user) return response({ error: "unauthenticated" }, 401);
+  if (caller.error || !caller.data.user) return response({ error: "unauthenticated" }, 401, corsHeaders);
 
   const input = await request.json().catch(() => ({}));
 
-  // Validate required fields.
   if (typeof input.tenant_id !== "string" || typeof input.email !== "string" || typeof input.role !== "string") {
-    return response({ error: "invalid_input" }, 400);
+    return response({ error: "invalid_input" }, 400, corsHeaders);
   }
 
   const callerId = caller.data.user.id;
@@ -51,14 +72,12 @@ Deno.serve(async (request) => {
     .maybeSingle();
 
   if (!membership && !platformAdmin) {
-    return response({ error: "forbidden" }, 403);
+    return response({ error: "forbidden" }, 403, corsHeaders);
   }
 
-  // Prevent escalation: a school_admin may only invite school-level roles.
-  // Platform admins may grant any role.
   const SCHOOL_ROLES = ["school_admin", "principal", "registrar", "teacher", "finance_officer", "librarian", "parent", "student"];
   if (!platformAdmin && !SCHOOL_ROLES.includes(input.role)) {
-    return response({ error: "forbidden" }, 403);
+    return response({ error: "forbidden" }, 403, corsHeaders);
   }
 
   // Student invitations may carry a student_id in metadata so that
@@ -82,7 +101,7 @@ Deno.serve(async (request) => {
   if (existing) {
     return response(
       { error: "invitation_exists", invitation_id: existing.id },
-      409,
+      409, corsHeaders
     );
   }
 
@@ -108,7 +127,7 @@ Deno.serve(async (request) => {
     .select("id, email, role, expires_at")
     .single();
 
-  if (error) return response({ error: "invitation_failed" }, 400);
+  if (error) return response({ error: "invitation_failed" }, 400, corsHeaders);
 
   // Record invitation timing on the staff profile, if one exists with
   // this email within the tenant.
@@ -157,5 +176,5 @@ Deno.serve(async (request) => {
       : {}),
   };
 
-  return response(responseBody);
+  return response(responseBody, 200, corsHeaders);
 });

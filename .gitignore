@@ -1,6 +1,7 @@
 .env
 .env.*
 node_modules/
+config.js
 verify-migrations*.mjs
 package-lock.json
 setup-accounts.js

@@ -1,7 +1,25 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const json = (body: unknown, status = 200) =>
-  new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+const ALLOWED_ORIGINS = [
+  "https://timiretimzzy.github.io",
+  "https://school-kohl-two.vercel.app",
+  "http://localhost:8080",
+  "http://localhost:3000",
+];
+
+function getCorsHeaders(request: Request): Record<string, string> {
+  const origin = request.headers.get("origin") || "";
+  const allowed = ALLOWED_ORIGINS.includes(origin) ? origin : ALLOWED_ORIGINS[0];
+  return {
+    "Access-Control-Allow-Origin": allowed,
+    "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+    "Access-Control-Allow-Methods": "POST, OPTIONS",
+    "Access-Control-Allow-Credentials": "true",
+  };
+}
+
+const json = (body: unknown, status = 200, corsHeaders: Record<string, string> = {}) =>
+  new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json", ...corsHeaders } });
 const url = Deno.env.get("SUPABASE_URL")!;
 const admin = createClient(url, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
 
@@ -11,23 +29,25 @@ async function hashToken(raw: string) {
 }
 
 Deno.serve(async (request) => {
-  if (request.method !== "POST") return json({ error: "method_not_allowed" }, 405);
+  const corsHeaders = getCorsHeaders(request);
+  if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: corsHeaders });
+  if (request.method !== "POST") return json({ error: "method_not_allowed" }, 405, corsHeaders);
   const authToken = request.headers.get("authorization")?.replace("Bearer ", "");
-  if (!authToken) return json({ error: "unauthenticated" }, 401);
+  if (!authToken) return json({ error: "unauthenticated" }, 401, corsHeaders);
   const caller = await admin.auth.getUser(authToken);
-  if (caller.error || !caller.data.user) return json({ error: "unauthenticated" }, 401);
+  if (caller.error || !caller.data.user) return json({ error: "unauthenticated" }, 401, corsHeaders);
   const { data: platformAdmin } = await admin
     .from("platform_admins")
     .select("user_id")
     .eq("user_id", caller.data.user.id)
     .maybeSingle();
-  if (!platformAdmin) return json({ error: "forbidden" }, 403);
+  if (!platformAdmin) return json({ error: "forbidden" }, 403, corsHeaders);
 
   const input = await request.json().catch(() => ({}));
   const name = typeof input.name === "string" ? input.name.trim() : "";
   const slug = typeof input.slug === "string" ? input.slug.trim().toLowerCase() : "";
   if (name.length < 2 || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug)) {
-    return json({ error: "invalid_school_details" }, 400);
+    return json({ error: "invalid_school_details" }, 400, corsHeaders);
   }
 
   const { data: tenant, error } = await admin
@@ -35,7 +55,7 @@ Deno.serve(async (request) => {
     .insert({ name, slug, motto: input.motto ?? null })
     .select()
     .single();
-  if (error) return json({ error: error.code === "23505" ? "slug_already_exists" : "tenant_creation_failed" }, 400);
+  if (error) return json({ error: error.code === "23505" ? "slug_already_exists" : "tenant_creation_failed" }, 400, corsHeaders);
 
   const branding = input.branding && typeof input.branding === "object" ? input.branding : {};
   await admin.from("tenant_branding").insert({ tenant_id: tenant.id, ...branding });
@@ -84,5 +104,5 @@ Deno.serve(async (request) => {
   });
 
   // Return only safe data — no raw token.
-  return json({ tenant, invitation });
+  return json({ tenant, invitation }, 200, corsHeaders);
 });
