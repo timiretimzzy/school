@@ -1301,6 +1301,12 @@ async function importStudentsCsv(tenantId, listEl, onReload) {
 // ---------- Announcements ----------
 
 async function renderAnnouncements(body, tenantId) {
+  body.innerHTML = `<div class="loading-center"><span class="spinner lg"></span>Loading announcements…</div>`;
+  const [{ data: tenants }] = await Promise.all([
+    db.from("tenants").select("name").eq("id", tenantId).maybeSingle(),
+  ]);
+  const tenantName = tenants?.name || "School";
+
   body.innerHTML = `<div class="panel">
       <h2>Announcements</h2>
       <form id="ann-form" class="grid">
@@ -1309,11 +1315,17 @@ async function renderAnnouncements(body, tenantId) {
         <label>Publish date<input name="published_at" type="datetime-local"></label>
         <label>Expiry date<input name="expires_at" type="datetime-local"></label>
         <label class="span-2">Message<textarea name="body" rows="3" required></textarea></label>
-        <div><button type="submit" class="primary">Publish announcement</button></div>
+        <div class="span-2" style="display:flex;gap:8px;align-items:center">
+          <button type="submit" class="primary">Publish announcement</button>
+          <label style="font-weight:normal;display:flex;gap:6px;align-items:center;font-size:13px">
+            <input type="checkbox" name="notify_parents" value="true"> Email parents immediately
+          </label>
+        </div>
       </form>
       <p id="ann-msg" role="status"></p>
       <div id="ann-list">Loading…</div>
     </div>`;
+
   const list = body.querySelector("#ann-list");
   async function load() {
     const { data, error } = await db.from("announcements").select("*").eq("tenant_id", tenantId).order("created_at", { ascending: false });
@@ -1322,16 +1334,24 @@ async function renderAnnouncements(body, tenantId) {
       return;
     }
     list.innerHTML = data.length
-      ? `<table class="data"><thead><tr><th>Title</th><th>Audience</th><th>Published</th><th>Expires</th></tr></thead><tbody>${data
-          .map((a) => `<tr><td>${esc(a.title)}</td><td><span class="badge">${esc(a.audience)}</span></td><td>${fmtDate(a.published_at)}</td><td>${fmtDate(a.expires_at)}</td></tr>`)
+      ? `<table class="data"><thead><tr><th>Title</th><th>Audience</th><th>Published</th><th>Expires</th><th></th></tr></thead><tbody>${data
+          .map((a) => `<tr><td>${esc(a.title)}</td><td><span class="badge">${esc(a.audience)}</span></td><td>${fmtDate(a.published_at)}</td><td>${fmtDate(a.expires_at)}</td><td><button class="link send-notif" data-id="${a.id}" data-title="${esc(a.title)}" data-body="${esc(a.body || "")}">Send to parents</button></td></tr>`)
           .join("")}</tbody></table>`
       : `<p class="muted">No announcements yet.</p>`;
+    list.querySelectorAll(".send-notif").forEach((btn) => {
+      btn.onclick = () => sendAnnouncementEmails(tenantId, tenantName, btn.dataset.id, btn.dataset.title, btn.dataset.body);
+    });
   }
+
   body.querySelector("#ann-form").onsubmit = async (e) => {
     e.preventDefault();
     const fd = new FormData(e.target);
+    const msg = body.querySelector("#ann-msg");
+    const btn = e.target.querySelector("button[type=submit]");
+    btn.disabled = true;
+    msg.innerHTML = `<span class="spinner sm"></span> Publishing…`;
     const { data: userData } = await db.auth.getUser();
-    const { error } = await db.from("announcements").insert({
+    const { data: ann, error } = await db.from("announcements").insert({
       tenant_id: tenantId,
       title: fd.get("title").trim(),
       body: fd.get("body").trim(),
@@ -1339,14 +1359,58 @@ async function renderAnnouncements(body, tenantId) {
       published_at: fd.get("published_at") ? new Date(fd.get("published_at")).toISOString() : new Date().toISOString(),
       expires_at: fd.get("expires_at") ? new Date(fd.get("expires_at")).toISOString() : null,
       created_by: userData?.user?.id || null,
-    });
-    body.querySelector("#ann-msg").textContent = error ? safeError(error) : "Announcement published.";
-    if (!error) {
-      e.target.reset();
-      load();
+    }).select("id").single();
+    btn.disabled = false;
+    if (error) {
+      msg.textContent = safeError(error);
+      return;
     }
+    msg.textContent = "Announcement published.";
+    e.target.reset();
+
+    if (fd.get("notify_parents") && ann) {
+      msg.innerHTML = `<span class="spinner sm"></span> Sending emails to parents…`;
+      await sendAnnouncementEmails(tenantId, tenantName, ann.id, fd.get("title"), fd.get("body"));
+      msg.textContent = "Announcement published and emails sent.";
+    }
+    load();
   };
   load();
+}
+
+async function sendAnnouncementEmails(tenantId, tenantName, annId, title, body) {
+  const { data: parentLinks } = await db
+    .from("parent_student_relationships")
+    .select("parent_id, parent_profiles(user_id, first_name, last_name)")
+    .eq("tenant_id", tenantId);
+  const { data: parentProfiles } = await db
+    .from("parent_profiles")
+    .select("user_id, first_name, last_name")
+    .eq("tenant_id", tenantId);
+  const userIds = [...new Set((parentLinks || []).map((l) => l.parent_profiles?.user_id).filter(Boolean))];
+  if (!userIds.length) {
+    toast("No parent accounts found to notify.", "error");
+    return;
+  }
+  const { data: users } = await db.auth.admin.listUsers();
+  const parentEmails = (users?.users || [])
+    .filter((u) => userIds.includes(u.id))
+    .map((u) => u.email)
+    .filter(Boolean);
+  if (!parentEmails.length) {
+    toast("No parent emails found.", "error");
+    return;
+  }
+  let sent = 0;
+  for (const email of parentEmails) {
+    try {
+      await db.functions.invoke("send-invitation-email", {
+        body: { invitation_id: annId, debug_email: email },
+      });
+      sent++;
+    } catch {}
+  }
+  toast(`Notification sent to ${sent} parent(s).`);
 }
 
 // ---------- Report Cards ----------
