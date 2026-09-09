@@ -7,19 +7,23 @@ export async function resolveIdentity(user) {
   if (!user) return null;
   const identity = { user, isPlatformAdmin: false, memberships: [], parentProfile: null };
 
-  const [{ data: platformAdmin }, { data: memberships }, { data: parentProfile }] = await Promise.all([
-    db.from("platform_admins").select("role").eq("user_id", user.id).maybeSingle(),
-    db
-      .from("tenant_memberships")
-      .select("id, role, tenant_id, tenants(name, slug), must_change_password")
-      .eq("user_id", user.id)
-      .eq("active", true),
-    db.from("parent_profiles").select("id, tenant_id, first_name, last_name").eq("user_id", user.id).maybeSingle(),
-  ]);
+  try {
+    const [{ data: platformAdmin }, { data: memberships }, { data: parentProfile }] = await Promise.all([
+      db.from("platform_admins").select("role").eq("user_id", user.id).maybeSingle(),
+      db
+        .from("tenant_memberships")
+        .select("id, role, tenant_id, tenants(name, slug), must_change_password")
+        .eq("user_id", user.id)
+        .eq("active", true),
+      db.from("parent_profiles").select("id, tenant_id, first_name, last_name").eq("user_id", user.id).maybeSingle(),
+    ]);
 
-  identity.isPlatformAdmin = Boolean(platformAdmin);
-  identity.memberships = memberships || [];
-  identity.parentProfile = parentProfile || null;
+    identity.isPlatformAdmin = Boolean(platformAdmin);
+    identity.memberships = memberships || [];
+    identity.parentProfile = parentProfile || null;
+  } catch (err) {
+    console.error("resolveIdentity error:", err);
+  }
   return identity;
 }
 
