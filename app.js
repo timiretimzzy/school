@@ -10,6 +10,18 @@ import { renderParent } from "./js/pages/parent.js";
 import { renderAcceptInvite } from "./js/pages/acceptInvite.js";
 import { renderPasswordChange } from "./js/components/PasswordChange.js";
 
+// Global error boundary — catches unhandled errors and shows them in #app
+window.addEventListener("error", (event) => {
+  console.error("Uncaught error:", event.error);
+  const appEl = document.getElementById("app");
+  if (appEl) appEl.innerHTML = `<p class="error">Something went wrong. Please refresh the page.</p>`;
+});
+window.addEventListener("unhandledrejection", (event) => {
+  console.error("Unhandled promise rejection:", event.reason);
+  const appEl = document.getElementById("app");
+  if (appEl) appEl.innerHTML = `<p class="error">Something went wrong. Please refresh the page.</p>`;
+});
+
 let identity = null;
 let contexts = [];
 let activeContext = null;
