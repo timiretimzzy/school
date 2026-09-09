@@ -32,6 +32,7 @@ debug-schema.js
 
 # Temp/build artifacts
 supabase/.temp/
+supabase/supabase/.temp/
 supabase.zip
 simple_test.txt
 test_output.txt
