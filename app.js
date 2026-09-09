@@ -61,6 +61,8 @@ async function init() {
   }
   el("login-form").onsubmit = onLogin;
   el("signout").onclick = onSignOut;
+  el("hamburger").onclick = toggleMobileNav;
+  el("sidebar-overlay").onclick = closeMobileNav;
   window.addEventListener("hashchange", route);
 
   const { data } = await db.auth.getSession();
@@ -74,6 +76,18 @@ async function init() {
   isInitialized = true;
 }
 
+function toggleMobileNav() {
+  el("sidebar").classList.toggle("open");
+  el("sidebar-overlay").classList.toggle("open");
+  el("hamburger").classList.toggle("open");
+}
+
+function closeMobileNav() {
+  el("sidebar").classList.remove("open");
+  el("sidebar-overlay").classList.remove("open");
+  el("hamburger").classList.remove("open");
+}
+
 function showLogin() {
   el("login-screen").classList.remove("hidden");
   el("shell").classList.add("hidden");
@@ -83,17 +97,18 @@ function showLogin() {
 async function onLogin(e) {
   e.preventDefault();
   const msg = el("login-msg");
-  msg.textContent = "Signing in…";
+  const btn = el("login-form").querySelector("button[type=submit]");
+  btn.disabled = true;
+  msg.innerHTML = `<span class="spinner sm"></span> Signing in…`;
   const loginId = el("login-id").value.trim();
   const password = el("login-password").value.trim();
   await db.auth.signOut();
 
+  function loginError(text) { msg.textContent = text; btn.disabled = false; }
+
   if (loginId.includes("@")) {
     const { data: signIn, error: signInError } = await db.auth.signInWithPassword({ email: loginId, password });
-    if (signInError) {
-      msg.textContent = "Sign-in failed. Check your email and password.";
-      return;
-    }
+    if (signInError) return loginError("Sign-in failed. Check your email and password.");
     if (signIn && signIn.session) {
       await onSignedIn(signIn.session);
       return;
@@ -115,19 +130,17 @@ async function onLogin(e) {
       );
       const data = await response.json();
       if (data?.error || !data?.success || !data?.session) {
-        msg.textContent = data?.error || "Sign-in failed. Check your login ID and password.";
-        return;
+        return loginError(data?.error || "Sign-in failed. Check your login ID and password.");
       }
       await db.auth.setSession(data.session);
       await onSignedIn(data.session);
       return;
     } catch (err) {
-      msg.textContent = "Network error. Check your connection.";
-      return;
+      return loginError("Network error. Check your connection.");
     }
   }
 
-  msg.textContent = "Please enter a login ID or email.";
+  loginError("Please enter a login ID or email.");
 }
 
 async function onSignOut() {
@@ -139,7 +152,7 @@ async function onSignOut() {
 }
 
 async function onSignedIn(session) {
-  el("login-msg").textContent = "Loading workspace…";
+  el("login-msg").innerHTML = `<span class="spinner sm"></span> Loading workspace…`;
   identity = await resolveIdentity(session.user);
   contexts = buildContexts(identity);
 
@@ -229,7 +242,39 @@ function renderSidebar() {
     .map(([v, label]) => `<a href="#/${prefix}/${v}" class="nav">${esc(label)}</a>`)
     .join("");
   el("context-label").textContent = activeContext.label.toUpperCase();
+  document.querySelectorAll("#sidebar-nav .nav").forEach((a) => {
+    a.addEventListener("click", closeMobileNav);
+  });
 }
+
+/* ─── Toast ─── */
+window.toast = function(message, type = "success", duration = 3000) {
+  const existing = document.querySelector(".toast");
+  if (existing) existing.remove();
+  const t = document.createElement("div");
+  t.className = `toast ${type === "error" ? "error" : ""}`;
+  t.textContent = message;
+  document.body.appendChild(t);
+  setTimeout(() => t.remove(), duration);
+};
+
+/* ─── Confirm Dialog ─── */
+window.confirmAction = function(title, message, onConfirm) {
+  const overlay = document.createElement("div");
+  overlay.className = "modal confirm-modal";
+  overlay.innerHTML = `<div>
+    <h3 style="margin:0">${esc(title)}</h3>
+    <p>${esc(message)}</p>
+    <div class="actions">
+      <button class="secondary" id="confirm-cancel">Cancel</button>
+      <button class="danger" id="confirm-ok">Confirm</button>
+    </div>
+  </div>`;
+  document.body.appendChild(overlay);
+  overlay.querySelector("#confirm-cancel").onclick = () => overlay.remove();
+  overlay.querySelector("#confirm-ok").onclick = () => { overlay.remove(); onConfirm(); };
+  overlay.addEventListener("click", (e) => { if (e.target === overlay) overlay.remove(); });
+};
 
 async function route() {
   if (!activeContext) return;

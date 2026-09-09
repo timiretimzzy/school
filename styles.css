@@ -77,10 +77,62 @@ table.data th{color:#6c7a90;font-weight:600;font-size:12px;text-transform:upperc
 .modal{position:fixed;inset:0;background:#0008;display:flex;align-items:center;justify-content:center;padding:20px;z-index:20}
 .modal>div{background:#fff;padding:24px;border-radius:16px;max-width:640px;width:100%;max-height:90vh;overflow:auto}
 
+/* Hamburger menu button */
+.hamburger{display:none;background:none;border:none;padding:8px;cursor:pointer;flex-direction:column;gap:5px;z-index:30}
+.hamburger span{display:block;width:22px;height:2px;background:var(--text);border-radius:2px;transition:transform .2s,opacity .2s}
+.hamburger.open span:nth-child(1){transform:translateY(7px) rotate(45deg)}
+.hamburger.open span:nth-child(2){opacity:0}
+.hamburger.open span:nth-child(3){transform:translateY(-7px) rotate(-45deg)}
+
+/* Sidebar overlay for mobile */
+.sidebar-overlay{display:none;position:fixed;inset:0;background:#0008;z-index:9}
+.sidebar-overlay.open{display:block}
+
+/* Loading spinner */
+.spinner{display:inline-block;width:20px;height:20px;border:3px solid #e0e7f0;border-top-color:var(--secondary);border-radius:50%;animation:spin .6s linear infinite}
+.spinner.sm{width:14px;height:14px;border-width:2px}
+.spinner.lg{width:32px;height:32px;border-width:4px}
+@keyframes spin{to{transform:rotate(360deg)}}
+.loading-center{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;padding:40px;color:#6c7a90}
+
+/* Button states */
+button{transition:background .15s,opacity .15s,box-shadow .15s}
+button:hover:not(.link){filter:brightness(1.08)}
+button:active:not(.link){transform:scale(0.97)}
+button:focus-visible{outline:2px solid var(--secondary);outline-offset:2px}
+button:disabled,button[disabled]{opacity:.5;cursor:not-allowed;pointer-events:none}
+button.primary:hover:not(:disabled){background:#1a6ae0}
+button.primary:active:not(:disabled){background:#0d5bc5}
+button.danger{background:#b3261e;color:#fff;border:0;padding:10px 16px;border-radius:8px;font-weight:bold}
+button.danger:hover:not(:disabled){background:#9a1f18}
+button.secondary{background:#fff;color:var(--primary);border:1px solid #dce3ec;padding:10px 16px;border-radius:8px;font-weight:bold}
+button.secondary:hover:not(:disabled){background:#f4f7fb}
+
+/* Input focus */
+input:focus,select:focus,textarea:focus{outline:2px solid var(--secondary);outline-offset:1px;border-color:var(--secondary)}
+
+/* Toast notifications */
+.toast{position:fixed;bottom:24px;right:24px;background:#14713b;color:#fff;padding:14px 22px;border-radius:10px;font-size:14px;font-weight:500;z-index:1000;box-shadow:0 4px 16px rgba(0,0,0,.2);animation:slideInToast .3s ease}
+.toast.error{background:#b3261e}
+@keyframes slideInToast{from{transform:translateY(20px);opacity:0}to{transform:translateY(0);opacity:1}}
+
+/* Confirm modal */
+.confirm-modal .modal>div{text-align:center;max-width:400px}
+.confirm-modal .modal p{margin:16px 0;font-size:15px}
+.confirm-modal .modal .actions{display:flex;gap:10px;justify-content:center;margin-top:20px}
+
 @media(max-width:800px){
-  aside{width:70px}
-  .brand small,.nav{font-size:0}
-  .brand{padding-bottom:20px}
-  .cards,.grid,.checks{grid-template-columns:1fr}
+  .hamburger{display:flex}
+  aside{position:fixed;left:-280px;top:0;bottom:0;width:260px;z-index:20;transition:left .25s ease;overflow-y:auto}
+  aside.open{left:0}
   main{padding:18px}
+  header{flex-wrap:wrap}
+  .cards,.grid,.checks{grid-template-columns:1fr}
+  .panel-head{flex-direction:column;align-items:stretch}
+  .panel-head .actions{justify-content:flex-end}
+  table.data{font-size:12px}
+  table.data th,table.data td{padding:7px 6px}
+  .tabs{gap:4px}
+  .tab{padding:7px 10px;font-size:12px}
+  .modal>div{margin:10px;max-height:95vh}
 }
