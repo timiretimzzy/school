@@ -48,4 +48,4 @@ end
 $$;
 
 -- Grant execute on the function for the Edge Functions
-grant execute on public.generate_login_id(to role service_role);
+GRANT EXECUTE ON FUNCTION public.generate_login_id(text) TO service_role;

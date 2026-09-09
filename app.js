@@ -38,6 +38,9 @@ const NAV = {
     ["academics", "Academic setup"],
     ["students", "Students"],
     ["staff", "Staff & teachers"],
+    ["report-cards", "Report cards"],
+    ["timetable", "Timetable"],
+    ["finance", "Finance"],
     ["announcements", "Announcements"],
   ],
   teacher: [
@@ -155,6 +158,7 @@ async function onSignedIn(session) {
   el("login-screen").classList.add("hidden");
   el("shell").classList.remove("hidden");
   el("session-badge").textContent = `● ${session.user.email}`;
+  loadNotifications(session.user.id);
   const switcher = el("context-switch");
   switcher.innerHTML = contexts.map((c, i) => `<option value="${i}">${esc(c.label)}</option>`).join("");
   switcher.onchange = () => setContext(Number(switcher.value));
@@ -266,6 +270,34 @@ async function route() {
   } catch (err) {
     el("app").innerHTML = `<p class="error">${esc(safeError(err))}</p>`;
   }
+}
+
+async function loadNotifications(userId) {
+  try {
+    const { data } = await db.from("notifications").select("id, title, body, type, link, read_at, created_at").eq("user_id", userId).order("created_at", { ascending: false }).limit(20);
+    const notifs = data || [];
+    const unread = notifs.filter((n) => !n.read_at).length;
+    const countEl = el("notif-count");
+    if (unread > 0) { countEl.textContent = unread; countEl.style.display = "inline"; }
+    else { countEl.style.display = "none"; }
+
+    el("notif-bell").onclick = () => {
+      const existing = document.querySelector(".notif-dropdown");
+      if (existing) { existing.remove(); return; }
+      const dd = document.createElement("div");
+      dd.className = "notif-dropdown";
+      dd.style.cssText = "position:fixed;top:50px;right:20px;width:320px;max-height:400px;overflow:auto;background:#fff;border-radius:12px;box-shadow:0 4px 24px rgba(0,0,0,.15);z-index:100;padding:16px";
+      dd.innerHTML = `<h3 style="margin:0 0 12px">Notifications</h3>` +
+        (notifs.length ? notifs.map((n) => `
+          <div style="padding:8px 0;border-bottom:1px solid #eee;${!n.read_at ? "font-weight:600" : ""}">
+            <div style="font-size:13px">${esc(n.title)}</div>
+            ${n.body ? `<div style="font-size:12px;color:#666;margin-top:2px">${esc(n.body)}</div>` : ""}
+            <div style="font-size:11px;color:#999;margin-top:2px">${new Date(n.created_at).toLocaleString()}</div>
+          </div>`).join("") : '<p class="muted">No notifications.</p>');
+      document.body.appendChild(dd);
+      document.addEventListener("click", function close(e) { if (!dd.contains(e.target) && e.target !== el("notif-bell")) { dd.remove(); document.removeEventListener("click", close); } });
+    };
+  } catch {}
 }
 
 init();

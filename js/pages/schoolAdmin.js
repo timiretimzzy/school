@@ -10,6 +10,9 @@ export async function renderSchoolAdmin(container, tenantId, section) {
   if (section === "students") return renderStudents(body, tenantId);
   if (section === "staff") return renderStaff(body, tenantId);
   if (section === "announcements") return renderAnnouncements(body, tenantId);
+  if (section === "report-cards") return renderReportCards(body, tenantId);
+  if (section === "timetable") return renderTimetable(body, tenantId);
+  if (section === "finance") return renderFinance(body, tenantId);
   return renderDashboard(body, tenantId);
 }
 
@@ -19,6 +22,9 @@ function nav(active) {
     ["academics", "Academic setup"],
     ["students", "Students"],
     ["staff", "Staff & teachers"],
+    ["report-cards", "Report cards"],
+    ["timetable", "Timetable"],
+    ["finance", "Finance"],
     ["announcements", "Announcements"],
   ];
   return `<div class="tabs">${items
@@ -1341,4 +1347,300 @@ async function renderAnnouncements(body, tenantId) {
     }
   };
   load();
+}
+
+// ---------- Report Cards ----------
+
+async function renderReportCards(body, tenantId) {
+  body.innerHTML = `<p class="muted">Loading report cards…</p>`;
+  const [years, scales, { data: students }] = await Promise.all([
+    db.from("academic_years").select("id, name").eq("tenant_id", tenantId).order("name", { ascending: false }),
+    db.from("grading_scales").select("id, name, is_default").eq("tenant_id", tenantId),
+    db.from("students").select("id, first_name, last_name, admission_number").eq("tenant_id", tenantId).eq("status", "active").order("last_name"),
+  ]);
+  const yearList = years || [];
+  const scaleList = scales || [];
+
+  body.innerHTML = `
+    <div class="tabs subtabs">
+      <a href="#" class="tab active" data-sub="list">Report Cards</a>
+      <a href="#" class="tab" data-sub="scales">Grading Scales</a>
+    </div>
+    <div id="rc-list"></div>
+    <div id="rc-scales" class="hidden"></div>`;
+
+  body.querySelectorAll("[data-sub]").forEach((a) => {
+    a.onclick = (e) => {
+      e.preventDefault();
+      body.querySelectorAll("[data-sub]").forEach((t) => t.classList.remove("active"));
+      a.classList.add("active");
+      body.querySelector("#rc-list").classList.toggle("hidden", a.dataset.sub !== "list");
+      body.querySelector("#rc-scales").classList.toggle("hidden", a.dataset.sub !== "scales");
+    };
+  });
+
+  renderRCList(body.querySelector("#rc-list"), tenantId, yearList, scaleList);
+  renderScales(body.querySelector("#rc-scales"), tenantId, scaleList);
+}
+
+function renderRCList(container, tenantId, years, scales) {
+  container.innerHTML = `
+    <div class="panel" style="margin-top:16px">
+      <div class="panel-head"><h2>Generate Report Cards</h2></div>
+      <form id="rc-gen-form" class="grid">
+        <label>Academic Year<select id="rc-year" required>${years.map((y) => `<option value="${y.id}">${esc(y.name)}</option>`).join("")}</select></label>
+        <label>Grading Scale<select id="rc-scale">${scales.map((s) => `<option value="${s.id}" ${s.is_default ? "selected" : ""}>${esc(s.name)}</option>`).join("")}</select></label>
+        <div><button type="submit" class="primary">Generate Report Cards</button></div>
+      </form>
+      <p id="rc-msg" role="status"></p>
+    </div>
+    <div class="panel" style="margin-top:16px">
+      <div class="panel-head"><h2>Existing Report Cards</h2></div>
+      <div id="rc-list-table"><p class="muted">Click generate to create report cards for the selected year.</p></div>
+    </div>`;
+
+  container.querySelector("#rc-gen-form").onsubmit = async (e) => {
+    e.preventDefault();
+    const msg = container.querySelector("#rc-msg");
+    const yearId = container.querySelector("#rc-year").value;
+    const scaleId = container.querySelector("#rc-scale").value;
+    msg.textContent = "Generating report cards…";
+
+    const { data: enrolled } = await db.from("student_enrolments").select("student_id, class_id").eq("academic_year_id", yearId);
+    if (!enrolled || !enrolled.length) { msg.textContent = "No students enrolled for this year."; return; }
+
+    const { data: assessments } = await db.from("assessments").select("id, class_id, subject_id, max_mark").eq("academic_year_id", yearId).eq("tenant_id", tenantId).eq("status", "published");
+    const assessmentIds = (assessments || []).map((a) => a.id);
+    const { data: results } = assessmentIds.length
+      ? await db.from("assessment_results").select("assessment_id, student_id, mark").in("assessment_id", assessmentIds)
+      : { data: [] };
+
+    let created = 0;
+    for (const enrol of enrolled) {
+      const existing = await db.from("report_cards").select("id").eq("student_id", enrol.student_id).eq("academic_year_id", yearId).is("term_id", null).maybeSingle();
+      if (existing.data) continue;
+
+      const studentResults = (results || []).filter((r) => r.student_id === enrol.student_id);
+      const totalPct = studentResults.length
+        ? studentResults.reduce((sum, r) => {
+            const a = (assessments || []).find((x) => x.id === r.assessment_id);
+            return sum + (a ? (r.mark / a.max_mark) * 100 : 0);
+          }, 0) / studentResults.length
+        : 0;
+
+      const { data: rc } = await db.from("report_cards").insert({
+        tenant_id: tenantId, student_id: enrol.student_id, academic_year_id: yearId,
+        scale_id: scaleId || null, overall_average: Math.round(totalPct * 10) / 10, status: "draft",
+      }).select("id").single();
+
+      if (rc) {
+        for (const r of studentResults) {
+          const a = (assessments || []).find((x) => x.id === r.assessment_id);
+          if (a) await db.from("report_card_lines").insert({ report_card_id: rc.id, subject_id: a.subject_id, total_mark: r.mark });
+        }
+        created++;
+      }
+    }
+    msg.textContent = `Generated ${created} report card(s).`;
+  };
+}
+
+function renderScales(container, tenantId, existing) {
+  container.innerHTML = `
+    <div class="panel" style="margin-top:16px">
+      <div class="panel-head"><h2>Grading Scales</h2>
+        <button id="add-scale-btn" class="primary">New Scale</button>
+      </div>
+      <table class="data"><thead><tr><th>Name</th><th>Default</th></tr></thead>
+      <tbody>${existing.map((s) => `<tr><td>${esc(s.name)}</td><td>${s.is_default ? "Yes" : ""}</td></tr>`).join("") || '<tr><td colspan="2" class="muted">No grading scales yet.</td></tr>'}</tbody></table>
+    </div>
+    <div id="scale-form-area"></div>`;
+
+  container.querySelector("#add-scale-btn").onclick = () => {
+    const area = container.querySelector("#scale-form-area");
+    area.innerHTML = `
+      <div class="panel" style="margin-top:16px">
+        <div class="panel-head"><h2>New Grading Scale</h2></div>
+        <form id="scale-form" class="grid">
+          <label>Name<input type="text" name="name" required placeholder="e.g. Standard A-F"></label>
+          <div><button type="submit" class="primary">Save</button> <button type="button" class="link" id="cancel-scale">Cancel</button></div>
+        </form>
+        <p id="scale-msg" role="status"></p>
+      </div>`;
+    area.querySelector("#cancel-scale").onclick = () => { area.innerHTML = ""; };
+    area.querySelector("#scale-form").onsubmit = async (e) => {
+      e.preventDefault();
+      const fd = new FormData(e.target);
+      const { error } = await db.from("grading_scales").insert({ tenant_id: tenantId, name: fd.get("name").trim(), is_default: !existing.length });
+      area.querySelector("#scale-msg").textContent = error ? safeError(error) : "Scale created.";
+      if (!error) setTimeout(() => renderReportCards(container.closest("#school-body"), tenantId), 500);
+    };
+  };
+}
+
+// ---------- Timetable ----------
+
+async function renderTimetable(body, tenantId) {
+  body.innerHTML = `<p class="muted">Loading timetable…</p>`;
+  const [years, classes, subjects, periods, slots] = await Promise.all([
+    db.from("academic_years").select("id, name").eq("tenant_id", tenantId).order("name", { ascending: false }),
+    db.from("classes").select("id, name").eq("tenant_id", tenantId),
+    db.from("subjects").select("id, name").eq("tenant_id", tenantId),
+    db.from("timetable_periods").select("id, name, start_time, end_time, sort_order, is_break").eq("tenant_id", tenantId).order("sort_order"),
+    db.from("timetable_slots").select("id, class_id, subject_id, period_id, day_of_week, room, classes(name), subjects(name)").eq("tenant_id", tenantId),
+  ]);
+
+  const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+  const periodList = periods || [];
+  const slotList = slots || [];
+
+  body.innerHTML = `
+    <div class="panel" style="margin-top:16px">
+      <div class="panel-head"><h2>Weekly Timetable</h2>
+        <button id="add-period-btn" class="link">+ Period</button>
+        <button id="add-slot-btn" class="primary">+ Slot</button>
+      </div>
+      <div style="overflow-x:auto">
+        <table class="data" id="timetable-grid">
+          <thead><tr><th>Period</th>${DAYS.map((d) => `<th>${d}</th>`).join("")}</tr></thead>
+          <tbody>
+            ${periodList.map((p) => `<tr${p.is_break ? ' style="background:#f4f7fb"' : ""}>
+              <td><strong>${esc(p.name)}</strong><br><small>${esc((p.start_time || "").slice(0, 5))} - ${esc((p.end_time || "").slice(0, 5))}</small></td>
+              ${DAYS.map((_, di) => {
+                const slot = slotList.find((s) => s.period_id === p.id && s.day_of_week === di);
+                if (slot) return `<td style="background:#e8f0fe"><strong>${esc(slot.subjects?.name || "")}</strong><br><small>${esc(slot.classes?.name || "")}</small>${slot.room ? `<br><small>${esc(slot.room)}</small>` : ""}</td>`;
+                return p.is_break ? `<td style="background:#f0f0f0"></td>` : `<td></td>`;
+              }).join("")}
+            </tr>`).join("") || '<tr><td colspan="8" class="muted">No periods configured. Click "+ Period" to start.</td></tr>'}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <div id="tt-form-area"></div>`;
+
+  body.querySelector("#add-period-btn").onclick = () => {
+    const area = body.querySelector("#tt-form-area");
+    area.innerHTML = `
+      <div class="panel" style="margin-top:16px">
+        <div class="panel-head"><h2>Add Period</h2></div>
+        <form id="period-form" class="grid">
+          <label>Name<input type="text" name="name" required placeholder="e.g. Period 1"></label>
+          <label>Start time<input type="time" name="start_time" required></label>
+          <label>End time<input type="time" name="end_time" required></label>
+          <label><input type="checkbox" name="is_break"> Break period</label>
+          <div><button type="submit" class="primary">Save</button> <button type="button" class="link" id="cancel-period">Cancel</button></div>
+        </form>
+        <p id="period-msg" role="status"></p>
+      </div>`;
+    area.querySelector("#cancel-period").onclick = () => { area.innerHTML = ""; };
+    area.querySelector("#period-form").onsubmit = async (e) => {
+      e.preventDefault();
+      const fd = new FormData(e.target);
+      const maxOrder = periodList.length ? Math.max(...periodList.map((p) => p.sort_order || 0)) : 0;
+      const { error } = await db.from("timetable_periods").insert({
+        tenant_id: tenantId, name: fd.get("name").trim(),
+        start_time: fd.get("start_time"), end_time: fd.get("end_time"),
+        is_break: fd.has("is_break"), sort_order: maxOrder + 1,
+      });
+      area.querySelector("#period-msg").textContent = error ? safeError(error) : "Period added.";
+      if (!error) setTimeout(() => renderTimetable(body, tenantId), 500);
+    };
+  };
+
+  body.querySelector("#add-slot-btn").onclick = () => {
+    const area = body.querySelector("#tt-form-area");
+    area.innerHTML = `
+      <div class="panel" style="margin-top:16px">
+        <div class="panel-head"><h2>Add Timetable Slot</h2></div>
+        <form id="slot-form" class="grid">
+          <label>Year<select id="tt-year" required>${(years || []).map((y) => `<option value="${y.id}">${esc(y.name)}</option>`).join("")}</select></label>
+          <label>Class<select id="tt-class" required>${(classes || []).map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join("")}</select></label>
+          <label>Subject<select id="tt-subject" required>${(subjects || []).map((s) => `<option value="${s.id}">${esc(s.name)}</option>`).join("")}</select></label>
+          <label>Day<select id="tt-day" required>${DAYS.map((d, i) => `<option value="${i}">${d}</option>`).join("")}</select></label>
+          <label>Period<select id="tt-period" required>${periodList.filter((p) => !p.is_break).map((p) => `<option value="${p.id}">${esc(p.name)}</option>`).join("")}</select></label>
+          <label>Room<input type="text" name="room" placeholder="Optional"></label>
+          <div><button type="submit" class="primary">Save</button> <button type="button" class="link" id="cancel-slot">Cancel</button></div>
+        </form>
+        <p id="slot-msg" role="status"></p>
+      </div>`;
+    area.querySelector("#cancel-slot").onclick = () => { area.innerHTML = ""; };
+    area.querySelector("#slot-form").onsubmit = async (e) => {
+      e.preventDefault();
+      const { data: userData } = await db.auth.getUser();
+      const { error } = await db.from("timetable_slots").insert({
+        tenant_id: tenantId,
+        academic_year_id: body.querySelector("#tt-year").value,
+        class_id: body.querySelector("#tt-class").value,
+        subject_id: body.querySelector("#tt-subject").value,
+        teacher_user_id: userData.user.id,
+        period_id: body.querySelector("#tt-period").value,
+        day_of_week: parseInt(body.querySelector("#tt-day").value),
+        room: e.target.querySelector('[name="room"]').value.trim() || null,
+      });
+      area.querySelector("#slot-msg").textContent = error ? safeError(error) : "Slot added.";
+      if (!error) setTimeout(() => renderTimetable(body, tenantId), 500);
+    };
+  };
+}
+
+// ---------- Finance ----------
+
+async function renderFinance(body, tenantId) {
+  body.innerHTML = `<p class="muted">Loading finance…</p>`;
+  const [catResult, structResult, invResult, payResult] = await Promise.all([
+    db.from("fee_categories").select("id, name, description").eq("tenant_id", tenantId).order("sort_order"),
+    db.from("fee_structures").select("id, category_id, amount, currency, fee_categories(name), grades_or_forms(name)").eq("tenant_id", tenantId),
+    db.from("fee_invoices").select("id, amount, status, due_date, students(first_name, last_name, admission_number)").eq("tenant_id", tenantId).order("created_at", { ascending: false }).limit(50),
+    db.from("payments").select("id, amount, payment_method, payment_date").eq("tenant_id", tenantId).order("payment_date", { ascending: false }).limit(50),
+  ]);
+
+  const catList = catResult.data || [];
+  const structList = structResult.data || [];
+  const invoiceList = invResult.data || [];
+  const paymentList = payResult.data || [];
+  const totalInvoiced = invoiceList.reduce((s, i) => s + (Number(i.amount) || 0), 0);
+  const totalPaid = paymentList.reduce((s, p) => s + (Number(p.amount) || 0), 0);
+
+  body.innerHTML = `
+    <div class="cards" style="margin-top:16px">
+      <div class="card"><h3>Fee Categories</h3><p style="font-size:24px">${catList.length}</p></div>
+      <div class="card"><h3>Fee Structures</h3><p style="font-size:24px">${structList.length}</p></div>
+      <div class="card"><h3>Total Invoiced</h3><p style="font-size:24px">$${totalInvoiced.toLocaleString()}</p></div>
+      <div class="card"><h3>Total Paid</h3><p style="font-size:24px;color:var(--secondary)">$${totalPaid.toLocaleString()}</p></div>
+    </div>
+    <div class="panel" style="margin-top:16px">
+      <div class="panel-head"><h2>Fee Categories</h2>
+        <button id="add-cat-btn" class="primary">New Category</button>
+      </div>
+      <table class="data"><thead><tr><th>Name</th><th>Description</th><th>Structures</th></tr></thead>
+      <tbody>${catList.map((c) => `<tr><td>${esc(c.name)}</td><td>${esc(c.description || "—")}</td><td>${structList.filter((s) => s.category_id === c.id).length}</td></tr>`).join("") || '<tr><td colspan="3" class="muted">No fee categories.</td></tr>'}</tbody></table>
+    </div>
+    <div class="panel" style="margin-top:16px">
+      <div class="panel-head"><h2>Recent Invoices</h2></div>
+      <table class="data"><thead><tr><th>Student</th><th>Amount</th><th>Status</th><th>Due</th></tr></thead>
+      <tbody>${invoiceList.map((i) => `<tr><td>${esc(i.students?.first_name || "")} ${esc(i.students?.last_name || "")} (${esc(i.students?.admission_number || "")})</td><td>$${Number(i.amount).toLocaleString()}</td><td><span class="badge ${i.status === "paid" ? "active" : i.status === "overdue" ? "suspended" : "trial"}">${esc(i.status)}</span></td><td>${fmtDate(i.due_date)}</td></tr>`).join("") || '<tr><td colspan="4" class="muted">No invoices yet.</td></tr>'}</tbody></table>
+    </div>
+    <div id="finance-form-area"></div>`;
+
+  body.querySelector("#add-cat-btn").onclick = () => {
+    const area = body.querySelector("#finance-form-area");
+    area.innerHTML = `
+      <div class="panel" style="margin-top:16px">
+        <div class="panel-head"><h2>New Fee Category</h2></div>
+        <form id="cat-form" class="grid">
+          <label>Name<input type="text" name="name" required placeholder="e.g. Tuition"></label>
+          <label>Description<input type="text" name="description"></label>
+          <div><button type="submit" class="primary">Save</button> <button type="button" class="link" id="cancel-cat">Cancel</button></div>
+        </form>
+        <p id="cat-msg" role="status"></p>
+      </div>`;
+    area.querySelector("#cancel-cat").onclick = () => { area.innerHTML = ""; };
+    area.querySelector("#cat-form").onsubmit = async (e) => {
+      e.preventDefault();
+      const fd = new FormData(e.target);
+      const { error } = await db.from("fee_categories").insert({ tenant_id: tenantId, name: fd.get("name").trim(), description: fd.get("description").trim() || null });
+      area.querySelector("#cat-msg").textContent = error ? safeError(error) : "Category created.";
+      if (!error) setTimeout(() => renderFinance(body, tenantId), 500);
+    };
+  };
 }
