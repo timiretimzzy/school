@@ -21,16 +21,17 @@ export async function renderStudent(container, tenantId, userId) {
 // and RLS enforces that each caller may only reach rows they are entitled to.
 export async function renderStudentSummary(container, tenantId, studentId) {
   const [{ data: student }, { data: enrolment }, { data: attendance }, { data: results }, { data: announcements }] = await Promise.all([
-    db.from("students").select("*").eq("id", studentId).single(),
-    db.from("student_enrolments").select("classes(name), academic_years(name)").eq("student_id", studentId).limit(1).maybeSingle(),
-    db.from("attendance_records").select("status").eq("student_id", studentId),
+    db.from("students").select("*").eq("id", studentId).eq("tenant_id", tenantId).single(),
+    db.from("student_enrolments").select("classes(name), academic_years(name)").eq("student_id", studentId).eq("tenant_id", tenantId).limit(1).maybeSingle(),
+    db.from("attendance_records").select("status").eq("student_id", studentId).eq("tenant_id", tenantId),
     db
       .from("assessment_results")
       .select("mark, entered_at, assessments(name, maximum_mark, status)")
-      .eq("student_id", studentId)
+      .eq("student_id", studentId).eq("tenant_id", tenantId)
       .order("entered_at", { ascending: false }),
     db.from("announcements").select("title, body, published_at").eq("tenant_id", tenantId).order("published_at", { ascending: false }).limit(10),
   ]);
+  if (!student) { container.innerHTML = `<p class="error">Student record not found.</p>`; return; }
   const attSummary = (attendance || []).reduce((acc, a) => ({ ...acc, [a.status]: (acc[a.status] || 0) + 1 }), {});
   const publishedResults = (results || []).filter((r) => r.assessments?.status === "published");
   container.innerHTML = `

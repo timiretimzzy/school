@@ -95,15 +95,18 @@ Deno.serve(async (request) => {
         ? input.student_id
         : invitation.metadata?.student_id;
     if (typeof studentId === "string" && studentId) {
-      await admin.from("student_links").upsert(
-        {
-          tenant_id: invitation.tenant_id,
-          student_id: studentId,
-          user_id: caller.data.user.id,
-          relationship: "self",
-        },
-        { onConflict: "student_id,user_id" },
-      );
+      const { data: studentRecord } = await admin.from("students").select("id").eq("id", studentId).eq("tenant_id", invitation.tenant_id).maybeSingle();
+      if (studentRecord) {
+        await admin.from("student_links").upsert(
+          {
+            tenant_id: invitation.tenant_id,
+            student_id: studentId,
+            user_id: caller.data.user.id,
+            relationship: "self",
+          },
+          { onConflict: "student_id,user_id" },
+        );
+      }
     }
   }
 
@@ -125,10 +128,16 @@ Deno.serve(async (request) => {
       ? input.student_ids.filter((s: unknown) => typeof s === "string")
       : [];
     if (parent && studentIds.length) {
-      await admin.from("parent_student_relationships").upsert(
-        studentIds.map((student_id) => ({ tenant_id: invitation.tenant_id, parent_id: parent.id, student_id })),
-        { onConflict: "parent_id,student_id" },
-      );
+      // Validate that all student_ids belong to this tenant
+      const { data: validStudents } = await admin.from("students").select("id").eq("tenant_id", invitation.tenant_id).in("id", studentIds);
+      const validIds = new Set((validStudents || []).map((s) => s.id));
+      const filteredIds = studentIds.filter((id) => validIds.has(id));
+      if (filteredIds.length) {
+        await admin.from("parent_student_relationships").upsert(
+          filteredIds.map((student_id) => ({ tenant_id: invitation.tenant_id, parent_id: parent.id, student_id })),
+          { onConflict: "parent_id,student_id" },
+        );
+      }
     }
   }
 

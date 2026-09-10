@@ -6,7 +6,7 @@ const supabaseKey = Deno.env.get("SUPABASE_ANON_KEY")!;
 const response = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), {
     status,
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", "Access-Control-Allow-Origin": "*" },
   });
 
 Deno.serve(async (request) => {

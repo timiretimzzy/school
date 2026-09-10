@@ -272,7 +272,12 @@ window.confirmAction = function(title, message, onConfirm) {
   </div>`;
   document.body.appendChild(overlay);
   overlay.querySelector("#confirm-cancel").onclick = () => overlay.remove();
-  overlay.querySelector("#confirm-ok").onclick = () => { overlay.remove(); onConfirm(); };
+  overlay.querySelector("#confirm-ok").onclick = async () => {
+    overlay.querySelector("#confirm-ok").disabled = true;
+    overlay.querySelector("#confirm-ok").textContent = "Working…";
+    try { await onConfirm(); } catch (err) { console.error(err); toast("An error occurred."); }
+    overlay.remove();
+  };
   overlay.addEventListener("click", (e) => { if (e.target === overlay) overlay.remove(); });
 };
 

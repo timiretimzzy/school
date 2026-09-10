@@ -103,11 +103,22 @@ Deno.serve(async (request) => {
       const { data: parentProfiles } = await admin.from("parent_profiles").select("user_id").eq("tenant_id", tenant_id);
       const userIds = (parentProfiles || []).map((p) => p.user_id).filter(Boolean);
       if (userIds.length) {
-        const allUsers = await admin.auth.admin.listUsers();
-        emails = (allUsers?.data?.users || [])
-          .filter((u) => userIds.includes(u.id))
-          .map((u) => u.email)
-          .filter(Boolean);
+        // Paginate through auth users to find matching emails
+        const userIdSet = new Set(userIds);
+        let page = 1;
+        const perPage = 100;
+        while (userIdSet.size > 0) {
+          const { data: pageUsers } = await admin.auth.admin.listUsers({ page, perPage });
+          if (!pageUsers?.users?.length) break;
+          for (const u of pageUsers.users) {
+            if (userIdSet.has(u.id) && u.email) {
+              emails.push(u.email);
+              userIdSet.delete(u.id);
+            }
+          }
+          if (pageUsers.users.length < perPage) break;
+          page++;
+        }
       }
     }
 

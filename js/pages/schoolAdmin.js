@@ -111,8 +111,11 @@ function crudList({ title, columns, load, addFields, insert }) {
     sub.querySelector("#add-form").onsubmit = async (e) => {
       e.preventDefault();
       const msg = sub.querySelector("#crud-msg");
+      const btn = e.target.querySelector("button[type=submit]");
+      btn.disabled = true;
       const { error } = await insert(new FormData(e.target), tenantId);
       msg.textContent = error ? safeError(error) : "Added.";
+      btn.disabled = false;
       if (!error) {
         e.target.reset();
         refresh();
@@ -307,6 +310,7 @@ async function renderStudents(body, tenantId) {
       db.from("assessment_results").select("mark, assessments(name, maximum_mark, status)").eq("student_id", id).eq("tenant_id", tenantId),
       db.from("student_links").select("relationship").eq("student_id", id).eq("tenant_id", tenantId),
     ]);
+    if (!student) { detail.innerHTML = `<p class="error">Student not found.</p>`; return; }
     const attSummary = (attendance || []).reduce((acc, a) => ({ ...acc, [a.status]: (acc[a.status] || 0) + 1 }), {});
     detail.innerHTML = `
       <div class="panel">
@@ -420,8 +424,8 @@ async function inviteStudent(tenantId, ds, onDone) {
       }
     } else {
       msg.innerHTML = `<p><span class="badge active">Invitation sent</span> ${esc(data.message || "The invitation has been created and will be delivered to the invitee.")}</p>`;
+      setTimeout(() => { overlay.remove(); onDone && onDone(); }, 2500);
     }
-    setTimeout(() => { overlay.remove(); onDone && onDone(); }, 1500);
   };
 }
 
@@ -578,7 +582,7 @@ function showStudentForm(tenantId, onSaved, existing, onUpdated) {
       </div>
       <p class="muted small">The student must change their password on first login.</p>
     </div>`;
-    setTimeout(() => { overlay.remove(); onSaved && onSaved(); onUpdated && onUpdated(); }, 4000);
+    setTimeout(() => { overlay.remove(); onSaved && onSaved(); onUpdated && onUpdated(); }, 6000);
   };
 }
 
@@ -611,6 +615,7 @@ async function renderStaff(body, tenantId) {
         <input name="employee_number" placeholder="Employee #" required>
         <input name="first_name" placeholder="First name" required>
         <input name="last_name" placeholder="Last name" required>
+        <select name="role"><option value="teacher">Teacher</option><option value="finance_officer">Finance Officer</option><option value="librarian">Librarian</option><option value="registrar">Registrar</option><option value="principal">Principal</option></select>
         <input name="email" type="email" placeholder="Email (for invitation)">
         <input name="password" type="password" placeholder="Password (min 8 chars)">
         <input name="department" placeholder="Department">
@@ -671,16 +676,17 @@ async function renderStaff(body, tenantId) {
     const btn = e.target.querySelector("button[type=submit]");
     const email = fd.get("email").trim();
     const password = fd.get("password") || undefined;
+    const role = fd.get("role") || "teacher";
     btn.disabled = true;
     msg.innerHTML = `<span class="spinner sm"></span> Creating account…`;
     const { data, error } = await db.functions.invoke("create-account", {
-      body: { tenant_id: tenantId, email, role: "teacher", password },
+      body: { tenant_id: tenantId, email, role, password },
     });
     if (error) { msg.textContent = safeError(error); btn.disabled = false; return; }
     if (data?.error) { msg.textContent = `Error: ${esc(data.error)}`; btn.disabled = false; return; }
     const loginId = data.login_id;
     msg.innerHTML = `<div class="panel" style="text-align:center;padding:20px">
-      <h3>Teacher Account Created</h3>
+      <h3>${esc(role.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()))} Account Created</h3>
       <p class="muted">Share these credentials with the teacher:</p>
       <div style="background:#f4f7fb;padding:16px;border-radius:8px;margin:12px 0;font-family:monospace;font-size:16px">
         <div><strong>Login ID:</strong> ${esc(loginId)}</div>
@@ -1048,10 +1054,11 @@ async function importStaffCsv(tenantId, listEl, onReload) {
         }
         return `<tr><td>${idx + 2}</td><td>${r.employee_number}</td><td colspan="2" class="error">Failed: ${r.error}</td></tr>`;
       });
-      previewEl.innerHTML += errors.length || successful === 0
-        ? `<p class="muted small">Import results: ${successful} succeeded, ${failed} failed.</p>`
-        : `<p class="muted small">All rows processed. ${successful} account(s) created with login IDs.</p>`;
-      setTimeout(() => { overlay.remove(); onReload && onReload(); }, 1200);
+      previewEl.innerHTML += resultRows.length
+        ? `<table class="data" style="max-height:200px;overflow:auto"><thead><tr><th>Row</th><th>Emp #</th><th>Login ID</th><th>Status</th></tr></thead><tbody>${resultRows.join("")}</tbody></table>`
+        : "";
+      previewEl.innerHTML += `<p class="muted small">Import results: ${successful} succeeded, ${failed} failed.</p>`;
+      setTimeout(() => { overlay.remove(); onReload && onReload(); }, 2000);
     };
     msgEl.textContent = "";
   };
@@ -1264,10 +1271,11 @@ async function importStudentsCsv(tenantId, listEl, onReload) {
         }
         return `<tr><td>${idx + 2}</td><td>${r.admission_number}</td><td colspan="2" class="error">Failed: ${r.error}</td></tr>`;
       });
-      previewEl.innerHTML += errors.length || successful === 0
-        ? `<p class="muted small">Import results: ${successful} succeeded, ${failed} failed.</p>`
-        : `<p class="muted small">All rows processed. ${successful} account(s) created with login IDs.</p>`;
-      setTimeout(() => { overlay.remove(); onReload && onReload(); }, 1200);
+      previewEl.innerHTML += resultRows.length
+        ? `<table class="data" style="max-height:200px;overflow:auto"><thead><tr><th>Row</th><th>Adm #</th><th>Login ID</th><th>Status</th></tr></thead><tbody>${resultRows.join("")}</tbody></table>`
+        : "";
+      previewEl.innerHTML += `<p class="muted small">Import results: ${successful} succeeded, ${failed} failed.</p>`;
+      setTimeout(() => { overlay.remove(); onReload && onReload(); }, 2000);
     };
     msgEl.textContent = "";
   };
@@ -1381,16 +1389,17 @@ async function sendAnnouncementEmails(tenantId, tenantName, annId, title, body) 
 
 async function renderReportCards(body, tenantId) {
   body.innerHTML = `<div class="loading-center"><span class="spinner lg"></span>Loading report cards…</div>`;
-  const [years, scales, terms, classes, subjects, { data: students }] = await Promise.all([
+  const [years, scales, scaleLevels, terms, classes, subjects, { data: students }] = await Promise.all([
     db.from("academic_years").select("id, name").eq("tenant_id", tenantId).order("name", { ascending: false }),
     db.from("grading_scales").select("id, name, is_default").eq("tenant_id", tenantId),
+    db.from("grading_scale_levels").select("id, scale_id, label, min_mark, max_mark, gpa_points, sort_order").order("sort_order"),
     db.from("terms").select("id, name, academic_year_id").eq("tenant_id", tenantId).order("starts_on"),
     db.from("classes").select("id, name").eq("tenant_id", tenantId).order("name"),
     db.from("subjects").select("id, name, code").eq("tenant_id", tenantId).order("name"),
     db.from("students").select("id, first_name, last_name, admission_number").eq("tenant_id", tenantId).eq("status", "active").order("last_name"),
   ]);
   const yearList = years || [];
-  const scaleList = scales || [];
+  const scaleList = (scales || []).map((s) => ({ ...s, levels: (scaleLevels || []).filter((l) => l.scale_id === s.id).sort((a, b) => b.min_mark - a.min_mark) }));
   const termList = terms || [];
   const classList = classes || [];
   const subjectList = subjects || [];
@@ -1460,10 +1469,10 @@ function renderRCList(container, tenantId, years, scales, terms, classes, subjec
 
     let enrolled = [];
     if (classId) {
-      const { data } = await db.from("student_enrolments").select("student_id, class_id").eq("academic_year_id", yearId).eq("class_id", classId);
+      const { data } = await db.from("student_enrolments").select("student_id, class_id").eq("tenant_id", tenantId).eq("academic_year_id", yearId).eq("class_id", classId);
       enrolled = data || [];
     } else {
-      const { data } = await db.from("student_enrolments").select("student_id, class_id").eq("academic_year_id", yearId);
+      const { data } = await db.from("student_enrolments").select("student_id, class_id").eq("tenant_id", tenantId).eq("academic_year_id", yearId);
       enrolled = data || [];
     }
     if (!enrolled.length) { msg.textContent = "No students enrolled for this selection."; btn.disabled = false; return; }
@@ -1481,11 +1490,19 @@ function renderRCList(container, tenantId, years, scales, terms, classes, subjec
       ? await db.from("assessment_results").select("assessment_id, student_id, mark").in("assessment_id", assessmentIds)
       : { data: [] };
 
+    // Batch fetch existing report cards for this year/term
+    const studentIds = enrolled.map((e) => e.student_id);
+    const { data: existingCards } = studentIds.length
+      ? await db.from("report_cards").select("id, student_id").eq("tenant_id", tenantId).eq("academic_year_id", yearId).eq("term_id", termId).in("student_id", studentIds)
+      : { data: [] };
+    const existingByStudent = Object.fromEntries((existingCards || []).map((c) => [c.student_id, c.id]));
+
     let created = 0;
     let updated = 0;
-    for (const enrol of enrolled) {
-      const existing = await db.from("report_cards").select("id").eq("student_id", enrol.student_id).eq("academic_year_id", yearId).eq("term_id", termId).maybeSingle();
+    const newLines = [];
+    const updateLines = [];
 
+    for (const enrol of enrolled) {
       const studentResults = (results || []).filter((r) => r.student_id === enrol.student_id);
       const totalPct = studentResults.length
         ? studentResults.reduce((sum, r) => {
@@ -1499,8 +1516,6 @@ function renderRCList(container, tenantId, years, scales, terms, classes, subjec
         : 0;
 
       const grade = computeGrade(scaleById[scaleId], totalPct);
-
-      // Aggregate results by subject
       const subjectAgg = {};
       for (const r of studentResults) {
         const a = assessments.find((x) => x.id === r.assessment_id);
@@ -1511,12 +1526,13 @@ function renderRCList(container, tenantId, years, scales, terms, classes, subjec
         subjectAgg[a.subject_id].count++;
       }
 
-      if (existing.data) {
-        await db.from("report_cards").update({ overall_average: Math.round(totalPct * 10) / 10, grade, scale_id: scaleId }).eq("id", existing.data.id);
-        await db.from("report_card_lines").delete().eq("report_card_id", existing.data.id);
+      const existingId = existingByStudent[enrol.student_id];
+      if (existingId) {
+        await db.from("report_cards").update({ overall_average: Math.round(totalPct * 10) / 10, grade, scale_id: scaleId }).eq("id", existingId);
+        await db.from("report_card_lines").delete().eq("report_card_id", existingId);
         for (const [subjectId, agg] of Object.entries(subjectAgg)) {
           const avg = agg.maxTotal > 0 ? Math.round((agg.total / agg.maxTotal) * 1000) / 10 : 0;
-          await db.from("report_card_lines").insert({ report_card_id: existing.data.id, subject_id: subjectId, total_mark: agg.total, max_mark: agg.maxTotal, average: avg });
+          updateLines.push({ report_card_id: existingId, subject_id: subjectId, total_mark: agg.total, max_mark: agg.maxTotal, average: avg });
         }
         updated++;
       } else {
@@ -1527,10 +1543,22 @@ function renderRCList(container, tenantId, years, scales, terms, classes, subjec
         if (rc) {
           for (const [subjectId, agg] of Object.entries(subjectAgg)) {
             const avg = agg.maxTotal > 0 ? Math.round((agg.total / agg.maxTotal) * 1000) / 10 : 0;
-            await db.from("report_card_lines").insert({ report_card_id: rc.id, subject_id: subjectId, total_mark: agg.total, max_mark: agg.maxTotal, average: avg });
+            newLines.push({ report_card_id: rc.id, subject_id: subjectId, total_mark: agg.total, max_mark: agg.maxTotal, average: avg });
           }
           created++;
         }
+      }
+    }
+
+    // Batch insert lines
+    if (newLines.length) {
+      for (let i = 0; i < newLines.length; i += 50) {
+        await db.from("report_card_lines").insert(newLines.slice(i, i + 50));
+      }
+    }
+    if (updateLines.length) {
+      for (let i = 0; i < updateLines.length; i += 50) {
+        await db.from("report_card_lines").insert(updateLines.slice(i, i + 50));
       }
     }
     msg.textContent = `Done: ${created} created, ${updated} updated.`;
@@ -1573,7 +1601,7 @@ async function loadRCList(container, tenantId, years, classes, scaleById, classB
   });
   tableEl.querySelectorAll(".publish-rc").forEach((btn) => {
     btn.onclick = async () => {
-      await db.from("report_cards").update({ status: "published" }).eq("id", btn.dataset.id);
+      await db.from("report_cards").update({ status: "published" }).eq("id", btn.dataset.id).eq("tenant_id", tenantId);
       toast("Report card published");
       loadRCList(container, tenantId, years, classes, scaleById, classById, subjectById);
     };
@@ -1582,7 +1610,12 @@ async function loadRCList(container, tenantId, years, classes, scaleById, classB
 
 function computeGrade(scale, pct) {
   if (!scale) return null;
-  // For now, use a simple A-F scale if no grading_scale_levels exist
+  if (scale.levels && scale.levels.length) {
+    for (const level of scale.levels) {
+      if (pct >= level.min_mark && pct <= level.max_mark) return level.label;
+    }
+    return scale.levels[scale.levels.length - 1]?.label || null;
+  }
   if (pct >= 90) return "A";
   if (pct >= 80) return "B";
   if (pct >= 70) return "C";
@@ -1592,11 +1625,11 @@ function computeGrade(scale, pct) {
 
 async function viewReportCard(rcId, tenantId, scaleById, classById, subjectById) {
   const [{ data: rc }, { data: yearsData }, { data: tenantData }] = await Promise.all([
-    db.from("report_cards").select("*, students(first_name, last_name, admission_number, date_of_birth, gender)").eq("id", rcId).single(),
+    db.from("report_cards").select("*, students(first_name, last_name, admission_number, date_of_birth, gender)").eq("id", rcId).eq("tenant_id", tenantId).single(),
     db.from("academic_years").select("id, name").eq("tenant_id", tenantId),
     db.from("tenants").select("name, motto, phone, email").eq("id", tenantId).maybeSingle(),
   ]);
-  if (!rc) return;
+  if (!rc) { toast("Report card not found."); return; }
   const { data: lines } = await db.from("report_card_lines").select("*, subjects(name, code)").eq("report_card_id", rcId);
   const { data: attendance } = await db.from("attendance_records").select("status").eq("student_id", rc.student_id).eq("tenant_id", tenantId);
   const attSummary = (attendance || []).reduce((acc, a) => ({ ...acc, [a.status]: (acc[a.status] || 0) + 1 }), {});
@@ -1961,17 +1994,22 @@ function renderFinInvoices(container, tenantId, invoices, students, categories, 
       const structure = structures.find((s) => s.category_id === catId);
       if (!structure) { msg.textContent = "No fee structure found for this category. Create one in Categories first."; return; }
       msg.innerHTML = `<span class="spinner sm"></span> Creating invoices…`;
-      let created = 0;
-      for (const s of students) {
-        const { data: existing } = await db.from("fee_invoices").select("id").eq("tenant_id", tenantId).eq("student_id", s.id).in("status", ["pending", "overdue", "partial"]).maybeSingle();
-        if (existing) continue;
-        const { error } = await db.from("fee_invoices").insert({
-          tenant_id: tenantId, student_id: s.id, amount: structure.amount, due_date: dueDate,
-          description: structure.fee_categories?.name || "Fee", status: "pending",
-        });
-        if (!error) created++;
+      // Batch fetch existing invoices for all students
+      const studentIds = students.map((s) => s.id);
+      const { data: existingInvoices } = studentIds.length
+        ? await db.from("fee_invoices").select("student_id").eq("tenant_id", tenantId).in("status", ["pending", "overdue", "partial"]).in("student_id", studentIds)
+        : { data: [] };
+      const existingStudentIds = new Set((existingInvoices || []).map((i) => i.student_id));
+      const newInvoices = students
+        .filter((s) => !existingStudentIds.has(s.id))
+        .map((s) => ({ tenant_id: tenantId, student_id: s.id, amount: structure.amount, due_date: dueDate, description: structure.fee_categories?.name || "Fee", status: "pending" }));
+      if (newInvoices.length) {
+        // Insert in batches of 50
+        for (let i = 0; i < newInvoices.length; i += 50) {
+          await db.from("fee_invoices").insert(newInvoices.slice(i, i + 50));
+        }
       }
-      msg.textContent = `Created ${created} invoice(s).`;
+      msg.textContent = `Created ${newInvoices.length} invoice(s).`;
       setTimeout(() => renderFinance(container.closest("#school-body"), tenantId), 1000);
     };
   };

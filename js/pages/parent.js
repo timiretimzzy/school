@@ -4,11 +4,12 @@ import { renderStudentSummary } from "./student.js";
 
 export async function renderParent(container, tenantId, parentId) {
   container.innerHTML = `<p class="muted">Loading your children…</p>`;
-  const { data: links } = await db
+  const { data: links, error: linksErr } = await db
     .from("parent_student_relationships")
     .select("student_id, relationship, students(first_name, last_name, admission_number)")
-    .eq("parent_id", parentId);
-  if (!links || !links.length) {
+    .eq("parent_id", parentId)
+    .eq("tenant_id", tenantId);
+  if (linksErr || !links || !links.length) {
     container.innerHTML = `<div class="panel"><p class="muted">No children are linked to your account yet. Ask the school administrator to link your invitation to your child's record.</p></div>`;
     return;
   }
