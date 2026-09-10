@@ -65,6 +65,27 @@ Deno.serve(async (request) => {
       return response({ error: validationError }, 400, corsHeaders);
     }
 
+    // Verify current password unless this is a forced first-time change
+    const { data: membership } = await admin
+      .from("tenant_memberships")
+      .select("must_change_password")
+      .eq("user_id", userId)
+      .eq("active", true)
+      .maybeSingle();
+
+    if (!membership?.must_change_password && typeof input.current_password === "string") {
+      // Verify current password by attempting sign-in with Supabase anon client
+      const anonKey = Deno.env.get("SUPABASE_ANON_KEY")!;
+      const anonClient = createClient(supabaseUrl, anonKey);
+      const { error: signInErr } = await anonClient.auth.signInWithPassword({
+        email: caller.data.user.email || "",
+        password: input.current_password,
+      });
+      if (signInErr) {
+        return response({ error: "current_password_incorrect" }, 400, corsHeaders);
+      }
+    }
+
     const { error: updateErr } = await admin.auth.admin.updateUserById(userId, {
       password: input.new_password,
     });

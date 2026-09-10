@@ -41,6 +41,7 @@ async function sendViaResend(to: string, subject: string, html: string): Promise
 }
 
 function buildAnnouncementEmail(tenantName: string, title: string, body: string): string {
+  const escHtml = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
   return `
 <!DOCTYPE html>
 <html>
@@ -48,11 +49,11 @@ function buildAnnouncementEmail(tenantName: string, title: string, body: string)
 <body style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;max-width:600px;margin:0 auto;padding:20px;color:#17243a">
   <div style="text-align:center;padding:24px 0">
     <h1 style="color:#123c69;margin:0">EDUSTACK</h1>
-    <p style="color:#666;margin:4px 0 0">${tenantName}</p>
+    <p style="color:#666;margin:4px 0 0">${escHtml(tenantName)}</p>
   </div>
   <div style="background:#f4f7fb;border-radius:12px;padding:32px;margin:24px 0">
-    <h2 style="margin-top:0">${title}</h2>
-    <p style="font-size:15px;line-height:1.6">${body.replace(/\n/g, "<br>")}</p>
+    <h2 style="margin-top:0">${escHtml(title)}</h2>
+    <p style="font-size:15px;line-height:1.6">${escHtml(body).replace(/\n/g, "<br>")}</p>
   </div>
   <div style="text-align:center;padding:16px 0;color:#999;font-size:12px">
     <p>EduStack — School Management Platform</p>
@@ -75,6 +76,24 @@ Deno.serve(async (request) => {
     const input = await request.json().catch(() => ({}));
     const { tenant_id, title, body: emailBody, audience } = input;
     if (!tenant_id || !title) return json({ error: "invalid_input" }, 400, corsHeaders);
+
+    // Authorization: caller must be school_admin or principal of this tenant
+    const { data: membership } = await admin
+      .from("tenant_memberships")
+      .select("role")
+      .eq("tenant_id", tenant_id)
+      .eq("user_id", caller.data.user.id)
+      .in("role", ["school_admin", "principal"])
+      .eq("active", true)
+      .maybeSingle();
+    const { data: platformAdmin } = await admin
+      .from("platform_admins")
+      .select("user_id")
+      .eq("user_id", caller.data.user.id)
+      .maybeSingle();
+    if (!membership && !platformAdmin) {
+      return json({ error: "forbidden" }, 403, corsHeaders);
+    }
 
     const { data: tenant } = await admin.from("tenants").select("name").eq("id", tenant_id).maybeSingle();
     const tenantName = tenant?.name || "School";

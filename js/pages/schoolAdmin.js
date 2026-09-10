@@ -300,11 +300,11 @@ async function renderStudents(body, tenantId) {
     const detail = body.querySelector("#student-detail");
     detail.innerHTML = `<p class="muted">Loading profile…</p>`;
     const [{ data: student }, { data: enrolment }, { data: attendance }, { data: results }, { data: links }] = await Promise.all([
-      db.from("students").select("*").eq("id", id).single(),
-      db.from("student_enrolments").select("classes(name), academic_years(name)").eq("student_id", id).limit(1).maybeSingle(),
-      db.from("attendance_records").select("status").eq("student_id", id),
-      db.from("assessment_results").select("mark, assessments(name, maximum_mark, status)").eq("student_id", id),
-      db.from("student_links").select("relationship").eq("student_id", id),
+      db.from("students").select("*").eq("id", id).eq("tenant_id", tenantId).single(),
+      db.from("student_enrolments").select("classes(name), academic_years(name)").eq("student_id", id).eq("tenant_id", tenantId).limit(1).maybeSingle(),
+      db.from("attendance_records").select("status").eq("student_id", id).eq("tenant_id", tenantId),
+      db.from("assessment_results").select("mark, assessments(name, maximum_mark, status)").eq("student_id", id).eq("tenant_id", tenantId),
+      db.from("student_links").select("relationship").eq("student_id", id).eq("tenant_id", tenantId),
     ]);
     const attSummary = (attendance || []).reduce((acc, a) => ({ ...acc, [a.status]: (acc[a.status] || 0) + 1 }), {});
     detail.innerHTML = `
@@ -501,7 +501,6 @@ async function inviteAllStudents(tenantId, onReload) {
   }
 
   progress.textContent = `Complete`;
-  // Count skipped students using real DB relationships
   const skippedByLink = (students || []).filter((s) => linkedIds.has(s.id)).length;
   const skippedByPending = (students || []).filter((s) => pendingStudentIds.has(s.id)).length;
   const skippedCount = skippedByLink + skippedByPending;
@@ -515,6 +514,7 @@ async function inviteAllStudents(tenantId, onReload) {
     <p class="muted small">Skipped: ${skippedByLink} already have a student link, ${skippedByPending} already have a pending invitation.</p>
   `;
   setTimeout(() => onReload && onReload(), 1000);
+  });
 }
 
 function downloadStudentCsvTemplate() {
@@ -543,6 +543,7 @@ function showStudentForm(tenantId, onSaved, existing, onUpdated) {
         <label>Middle name<input name="middle_name" value="${esc(s.middle_name || "")}"></label>
         <label>Last name<input name="last_name" value="${esc(s.last_name || "")}" required></label>
         <label>Email<input name="email" type="email" placeholder="student@school.demo" value="${esc(s.email || "")}"></label>
+        <label>Password<input name="password" type="password" placeholder="Min 8 chars, upper+lower+digit+special" ${existing ? "" : "required"}></label>
         <label>Date of birth<input name="date_of_birth" type="date" value="${esc(s.date_of_birth || "")}"></label>
         <label>Gender<select name="gender"><option value="">—</option><option ${s.gender === "female" ? "selected" : ""}>female</option><option ${s.gender === "male" ? "selected" : ""}>male</option><option ${s.gender === "other" ? "selected" : ""}>other</option></select></label>
         <label>Status<select name="status"><option value="active" ${(s.status || "active") === "active" ? "selected" : ""}>active</option><option value="inactive" ${s.status === "inactive" ? "selected" : ""}>inactive</option><option value="graduated" ${s.status === "graduated" ? "selected" : ""}>graduated</option></select></label>
@@ -557,43 +558,26 @@ function showStudentForm(tenantId, onSaved, existing, onUpdated) {
     e.preventDefault();
     const fd = new FormData(e.target);
     const msg = overlay.querySelector("#student-form-msg");
+    const btn = e.target.querySelector("button[type=submit]");
     const email = fd.get("email").trim() || null;
-
-    // Call create-account Edge Function - it handles auth user, profile, membership, and login_id
-    msg.textContent = "Creating account…";
+    const password = fd.get("password") || undefined;
+    btn.disabled = true;
+    msg.innerHTML = `<span class="spinner sm"></span> Creating account…`;
     const { data, error } = await db.functions.invoke("create-account", {
-      body: {
-        tenant_id: tenantId,
-        email: email,
-        role: "student",
-        password: fd.get("password"),
-      },
+      body: { tenant_id: tenantId, email, role: "student", password },
     });
-    if (error) {
-      msg.textContent = safeError(error);
-      return;
-    }
-    if (data?.error) {
-      msg.textContent = `Account creation error: ${esc(data.error)}`;
-      return;
-    }
-
-    // Show success message with login_id from Edge Function (which already created the profile)
+    if (error) { msg.textContent = safeError(error); btn.disabled = false; return; }
+    if (data?.error) { msg.textContent = `Error: ${esc(data.error)}`; btn.disabled = false; return; }
     const loginId = data.login_id;
     msg.innerHTML = `<div class="panel" style="text-align:center;padding:20px">
-      <h3>✅ Student Account Created</h3>
+      <h3>Student Account Created</h3>
       <p class="muted">Share these credentials with the student:</p>
       <div style="background:#f4f7fb;padding:16px;border-radius:8px;margin:12px 0;font-family:monospace;font-size:16px">
-        <div><strong>Login ID:</strong> <span id="login-id-display">${esc(loginId)}</span> <button type="button" class="link" onclick="navigator.clipboard.writeText('${esc(loginId)}')">Copy</button></div>
+        <div><strong>Login ID:</strong> ${esc(loginId)}</div>
       </div>
       <p class="muted small">The student must change their password on first login.</p>
     </div>`;
-    
-    setTimeout(() => {
-      overlay.remove();
-      onSaved && onSaved();
-      onUpdated && onUpdated();
-    }, 5000);
+    setTimeout(() => { overlay.remove(); onSaved && onSaved(); onUpdated && onUpdated(); }, 4000);
   };
 }
 
@@ -627,6 +611,7 @@ async function renderStaff(body, tenantId) {
         <input name="first_name" placeholder="First name" required>
         <input name="last_name" placeholder="Last name" required>
         <input name="email" type="email" placeholder="Email (for invitation)">
+        <input name="password" type="password" placeholder="Password (min 8 chars)">
         <input name="department" placeholder="Department">
         <input name="job_title" placeholder="Job title">
         <button type="submit">Add staff</button>
@@ -682,39 +667,27 @@ async function renderStaff(body, tenantId) {
     e.preventDefault();
     const fd = new FormData(e.target);
     const msg = body.querySelector("#staff-msg");
+    const btn = e.target.querySelector("button[type=submit]");
     const email = fd.get("email").trim();
-
-    // Call create-account Edge Function - it handles auth user, profile, membership, and login_id
-    msg.textContent = "Creating account…";
+    const password = fd.get("password") || undefined;
+    btn.disabled = true;
+    msg.innerHTML = `<span class="spinner sm"></span> Creating account…`;
     const { data, error } = await db.functions.invoke("create-account", {
-      body: {
-        tenant_id: tenantId,
-        email: email,
-        role: "teacher",
-        password: fd.get("password"),
-      },
+      body: { tenant_id: tenantId, email, role: "teacher", password },
     });
-    if (error) {
-      msg.textContent = safeError(error);
-      return;
-    }
-    if (data?.error) {
-      msg.textContent = `Account creation error: ${esc(data.error)}`;
-      return;
-    }
-
-    // Show success message with login_id from Edge Function (which already created the profile)
+    if (error) { msg.textContent = safeError(error); btn.disabled = false; return; }
+    if (data?.error) { msg.textContent = `Error: ${esc(data.error)}`; btn.disabled = false; return; }
     const loginId = data.login_id;
     msg.innerHTML = `<div class="panel" style="text-align:center;padding:20px">
-      <h3>✅ Teacher Account Created</h3>
+      <h3>Teacher Account Created</h3>
       <p class="muted">Share these credentials with the teacher:</p>
       <div style="background:#f4f7fb;padding:16px;border-radius:8px;margin:12px 0;font-family:monospace;font-size:16px">
-        <div><strong>Login ID:</strong> <span>${esc(loginId)}</span> <button type="button" class="link" onclick="navigator.clipboard.writeText('${esc(loginId)}')">Copy</button></div>
+        <div><strong>Login ID:</strong> ${esc(loginId)}</div>
       </div>
       <p class="muted small">The teacher must change their password on first login.</p>
     </div>`;
-    
     e.target.reset();
+    btn.disabled = false;
     load();
   };
   load();
@@ -827,6 +800,7 @@ async function inviteAllTeachers(tenantId, onReload) {
     ${failedList.length ? `<details><summary>Failed invitations (${failedList.length})</summary><ul>${failedList.map((f) => `<li>${esc(f)}</li>`).join("")}</ul></details>` : ""}
   `;
   setTimeout(() => onReload && onReload(), 1000);
+  });
 }
 
 // Invite modal — no raw token is ever shown to the inviter.
@@ -1379,38 +1353,27 @@ async function renderAnnouncements(body, tenantId) {
 }
 
 async function sendAnnouncementEmails(tenantId, tenantName, annId, title, body) {
-  const { data: parentLinks } = await db
-    .from("parent_student_relationships")
-    .select("parent_id, parent_profiles(user_id, first_name, last_name)")
-    .eq("tenant_id", tenantId);
   const { data: parentProfiles } = await db
     .from("parent_profiles")
-    .select("user_id, first_name, last_name")
+    .select("user_id")
     .eq("tenant_id", tenantId);
-  const userIds = [...new Set((parentLinks || []).map((l) => l.parent_profiles?.user_id).filter(Boolean))];
+  const userIds = [...new Set((parentProfiles || []).map((p) => p.user_id).filter(Boolean))];
   if (!userIds.length) {
     toast("No parent accounts found to notify.", "error");
     return;
   }
-  const { data: users } = await db.auth.admin.listUsers();
-  const parentEmails = (users?.users || [])
-    .filter((u) => userIds.includes(u.id))
-    .map((u) => u.email)
-    .filter(Boolean);
-  if (!parentEmails.length) {
-    toast("No parent emails found.", "error");
-    return;
+  try {
+    const { data, error } = await db.functions.invoke("send-announcement-email", {
+      body: { tenant_id: tenantId, title, body, audience: "parents" },
+    });
+    if (error) {
+      toast("Failed to send notifications: " + (error.message || "unknown error"), "error");
+      return;
+    }
+    toast(`Notification sent to ${data?.sent || 0} parent(s).`);
+  } catch (err) {
+    toast("Failed to send notifications.", "error");
   }
-  let sent = 0;
-  for (const email of parentEmails) {
-    try {
-      await db.functions.invoke("send-invitation-email", {
-        body: { invitation_id: annId, debug_email: email },
-      });
-      sent++;
-    } catch {}
-  }
-  toast(`Notification sent to ${sent} parent(s).`);
 }
 
 // ---------- Report Cards ----------
@@ -1612,26 +1575,33 @@ function computeGrade(scale, pct) {
 }
 
 async function viewReportCard(rcId, tenantId, scaleById, classById, subjectById) {
-  const { data: rc } = await db.from("report_cards").select("*, students(first_name, last_name, admission_number, date_of_birth, gender)").eq("id", rcId).single();
+  const [{ data: rc }, { data: yearsData }, { data: tenantData }] = await Promise.all([
+    db.from("report_cards").select("*, students(first_name, last_name, admission_number, date_of_birth, gender)").eq("id", rcId).single(),
+    db.from("academic_years").select("id, name").eq("tenant_id", tenantId),
+    db.from("tenants").select("name, motto, phone, email").eq("id", tenantId).maybeSingle(),
+  ]);
   if (!rc) return;
   const { data: lines } = await db.from("report_card_lines").select("*, subjects(name, code)").eq("report_card_id", rcId);
-  const { data: attendance } = await db.from("attendance_records").select("status").eq("student_id", rc.student_id);
+  const { data: attendance } = await db.from("attendance_records").select("status").eq("student_id", rc.student_id).eq("tenant_id", tenantId);
   const attSummary = (attendance || []).reduce((acc, a) => ({ ...acc, [a.status]: (acc[a.status] || 0) + 1 }), {});
+  const yearName = (yearsData || []).find((y) => y.id === rc.academic_year_id)?.name || "—";
+  const schoolName = esc(tenantData?.name || "School");
+  const schoolContact = [tenantData?.email, tenantData?.phone].filter(Boolean).join(" • ") || "School Address";
 
   const overlay = document.createElement("div");
   overlay.className = "modal";
   overlay.innerHTML = `<div style="max-width:700px">
     <div class="report-card-print" id="rc-print-area">
       <div style="text-align:center;border-bottom:2px solid var(--primary);padding-bottom:16px;margin-bottom:16px">
-        <h2 style="margin:0;color:var(--primary)">SCHOOL NAME</h2>
-        <p class="muted">School Address • Phone • Email</p>
+        <h2 style="margin:0;color:var(--primary)">${schoolName}</h2>
+        <p class="muted">${esc(schoolContact)}</p>
         <h3 style="margin:8px 0 0">STUDENT REPORT CARD</h3>
       </div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px">
         <div><strong>Name:</strong> ${esc(rc.students?.first_name)} ${esc(rc.students?.last_name)}</div>
         <div><strong>Admission #:</strong> ${esc(rc.students?.admission_number)}</div>
         <div><strong>Class:</strong> ${esc(classById[rc.class_id]?.name || "—")}</div>
-        <div><strong>Academic Year:</strong> ${esc(years?.find((y) => y.id === rc.academic_year_id)?.name || "—")}</div>
+        <div><strong>Academic Year:</strong> ${esc(yearName)}</div>
       </div>
       <table class="data" style="margin-top:12px"><thead><tr><th>Subject</th><th>Mark</th><th>Max</th><th>Average %</th><th>Grade</th></tr></thead>
       <tbody>${(lines || []).map((l) => `<tr>

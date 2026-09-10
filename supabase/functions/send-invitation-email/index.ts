@@ -125,6 +125,24 @@ Deno.serve(async (request) => {
     if (invError || !invitation) return response({ error: "invitation_not_found" }, 404, corsHeaders);
     if (invitation.accepted_at) return response({ error: "invitation_already_accepted" }, 400, corsHeaders);
 
+    // Authorization: caller must be school_admin/principal of the invitation's tenant
+    const { data: membership } = await admin
+      .from("tenant_memberships")
+      .select("role")
+      .eq("tenant_id", invitation.tenant_id)
+      .eq("user_id", caller.data.user.id)
+      .in("role", ["school_admin", "principal"])
+      .eq("active", true)
+      .maybeSingle();
+    const { data: platformAdmin } = await admin
+      .from("platform_admins")
+      .select("user_id")
+      .eq("user_id", caller.data.user.id)
+      .maybeSingle();
+    if (!membership && !platformAdmin) {
+      return response({ error: "forbidden" }, 403, corsHeaders);
+    }
+
     // Look up the tenant name
     const { data: tenant } = await admin
       .from("tenants")

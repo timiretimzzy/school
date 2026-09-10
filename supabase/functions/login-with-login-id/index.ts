@@ -138,7 +138,7 @@ Deno.serve(async (request) => {
   }
 
   const email = authData.user.email;
-  foundRole = input.role || determineRoleFromPrefix(prefix);
+  foundRole = determineRoleFromPrefix(prefix);
 
   const { data: signIn, error: signInError } = await supabase.auth.signInWithPassword({
     email,

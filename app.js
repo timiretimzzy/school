@@ -101,7 +101,7 @@ async function onLogin(e) {
   btn.disabled = true;
   msg.innerHTML = `<span class="spinner sm"></span> Signing in…`;
   const loginId = el("login-id").value.trim();
-  const password = el("login-password").value.trim();
+  const password = el("login-password").value;
   await db.auth.signOut();
 
   function loginError(text) { msg.textContent = text; btn.disabled = false; }
