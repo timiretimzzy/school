@@ -250,8 +250,8 @@ async function renderStudents(body, tenantId) {
   body.querySelector("#invite-all-students-btn").onclick = () => inviteAllStudents(tenantId, load);
 
   async function load() {
-    list.textContent = "Loading…";
-    let query = db.from("students").select("id, admission_number, first_name, last_name, email, status").eq("tenant_id", tenantId).order("last_name").limit(100);
+    list.innerHTML = `<div class="loading-center"><span class="spinner"></span>Loading…</div>`;
+    let query = db.from("students").select("id, admission_number, first_name, last_name, email, status", { count: "exact" }).eq("tenant_id", tenantId).order("last_name").limit(200);
     const term = search.value.trim();
     if (term) query = query.or(`first_name.ilike.%${term}%,last_name.ilike.%${term}%,admission_number.ilike.%${term}%`);
     if (statusFilter.value) query = query.eq("status", statusFilter.value);
@@ -260,7 +260,7 @@ async function renderStudents(body, tenantId) {
       const ids = (enrolled || []).map((e) => e.student_id);
       query = ids.length ? query.in("id", ids) : query.eq("id", "00000000-0000-0000-0000-000000000000");
     }
-    const { data, error } = await query;
+    const { data, error, count } = await query;
     if (error) {
       list.innerHTML = `<p class="error">${esc(safeError(error))}</p>`;
       return;
@@ -284,7 +284,8 @@ async function renderStudents(body, tenantId) {
     });
 
     list.innerHTML = data.length
-      ? `<table class="data"><thead><tr><th>Admission #</th><th>Name</th><th>Email</th><th>Invitation status</th><th></th></tr></thead><tbody>${data
+      ? `<p class="muted small" style="margin-bottom:8px">Showing ${data.length}${count > data.length ? ` of ${count}` : ""} students</p>
+      <table class="data"><thead><tr><th>Admission #</th><th>Name</th><th>Email</th><th>Invitation status</th><th></th></tr></thead><tbody>${data
           .map((s) => {
             const st = studentInviteStatus(s, linkedIds.has(s.id), pendingByStudent[s.id], expiredByStudent[s.id]);
             return `<tr><td>${esc(s.admission_number)}</td><td>${esc(s.first_name)} ${esc(s.last_name)}</td><td>${esc(s.email || "")}</td><td><span class="badge ${st.cls}">${st.label}</span></td><td>${st.inviteBtn}</td></tr>`;
@@ -1489,18 +1490,33 @@ function renderRCList(container, tenantId, years, scales, terms, classes, subjec
       const totalPct = studentResults.length
         ? studentResults.reduce((sum, r) => {
             const a = assessments.find((x) => x.id === r.assessment_id);
-            return sum + (a ? (r.mark / a.maximum_mark) * 100 : 0);
-          }, 0) / studentResults.length
+            const weight = a?.weighting || 1;
+            return sum + (a ? (r.mark / a.maximum_mark) * 100 * weight : 0);
+          }, 0) / studentResults.reduce((sum, r) => {
+            const a = assessments.find((x) => x.id === r.assessment_id);
+            return sum + (a?.weighting || 1);
+          }, 0) || 1
         : 0;
 
       const grade = computeGrade(scaleById[scaleId], totalPct);
 
+      // Aggregate results by subject
+      const subjectAgg = {};
+      for (const r of studentResults) {
+        const a = assessments.find((x) => x.id === r.assessment_id);
+        if (!a) continue;
+        if (!subjectAgg[a.subject_id]) subjectAgg[a.subject_id] = { total: 0, count: 0, maxTotal: 0 };
+        subjectAgg[a.subject_id].total += r.mark;
+        subjectAgg[a.subject_id].maxTotal += a.maximum_mark;
+        subjectAgg[a.subject_id].count++;
+      }
+
       if (existing.data) {
         await db.from("report_cards").update({ overall_average: Math.round(totalPct * 10) / 10, grade, scale_id: scaleId }).eq("id", existing.data.id);
         await db.from("report_card_lines").delete().eq("report_card_id", existing.data.id);
-        for (const r of studentResults) {
-          const a = assessments.find((x) => x.id === r.assessment_id);
-          if (a) await db.from("report_card_lines").insert({ report_card_id: existing.data.id, subject_id: a.subject_id, total_mark: r.mark, max_mark: a.maximum_mark, average: Math.round((r.mark / a.maximum_mark) * 1000) / 10 });
+        for (const [subjectId, agg] of Object.entries(subjectAgg)) {
+          const avg = agg.maxTotal > 0 ? Math.round((agg.total / agg.maxTotal) * 1000) / 10 : 0;
+          await db.from("report_card_lines").insert({ report_card_id: existing.data.id, subject_id: subjectId, total_mark: agg.total, max_mark: agg.maxTotal, average: avg });
         }
         updated++;
       } else {
@@ -1509,9 +1525,9 @@ function renderRCList(container, tenantId, years, scales, terms, classes, subjec
           scale_id: scaleId || null, overall_average: Math.round(totalPct * 10) / 10, grade, status: "draft",
         }).select("id").single();
         if (rc) {
-          for (const r of studentResults) {
-            const a = assessments.find((x) => x.id === r.assessment_id);
-            if (a) await db.from("report_card_lines").insert({ report_card_id: rc.id, subject_id: a.subject_id, total_mark: r.mark, max_mark: a.maximum_mark, average: Math.round((r.mark / a.maximum_mark) * 1000) / 10 });
+          for (const [subjectId, agg] of Object.entries(subjectAgg)) {
+            const avg = agg.maxTotal > 0 ? Math.round((agg.total / agg.maxTotal) * 1000) / 10 : 0;
+            await db.from("report_card_lines").insert({ report_card_id: rc.id, subject_id: subjectId, total_mark: agg.total, max_mark: agg.maxTotal, average: avg });
           }
           created++;
         }
@@ -1694,18 +1710,22 @@ function renderScales(container, tenantId, existing) {
 // ---------- Timetable ----------
 
 async function renderTimetable(body, tenantId) {
-  body.innerHTML = `<p class="muted">Loading timetable…</p>`;
-  const [years, classes, subjects, periods, slots] = await Promise.all([
+  body.innerHTML = `<div class="loading-center"><span class="spinner lg"></span>Loading timetable…</div>`;
+  const [years, classes, subjects, periods, slots, { data: teachers }, { data: staffProfiles }] = await Promise.all([
     db.from("academic_years").select("id, name").eq("tenant_id", tenantId).order("name", { ascending: false }),
     db.from("classes").select("id, name").eq("tenant_id", tenantId),
     db.from("subjects").select("id, name").eq("tenant_id", tenantId),
     db.from("timetable_periods").select("id, name, start_time, end_time, sort_order, is_break").eq("tenant_id", tenantId).order("sort_order"),
-    db.from("timetable_slots").select("id, class_id, subject_id, period_id, day_of_week, room, classes(name), subjects(name)").eq("tenant_id", tenantId),
+    db.from("timetable_slots").select("id, class_id, subject_id, period_id, day_of_week, room, teacher_user_id, classes(name), subjects(name)").eq("tenant_id", tenantId),
+    db.from("tenant_memberships").select("user_id").eq("tenant_id", tenantId).eq("role", "teacher").eq("active", true),
+    db.from("staff_profiles").select("user_id, first_name, last_name").eq("tenant_id", tenantId),
   ]);
 
   const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
   const periodList = periods || [];
   const slotList = slots || [];
+  const staffById = Object.fromEntries((staffProfiles || []).map((s) => [s.user_id, `${s.first_name} ${s.last_name}`]));
+  const teacherOpts = (teachers || []).map((t) => `<option value="${t.user_id}">${esc(staffById[t.user_id] || t.user_id)}</option>`).join("");
 
   body.innerHTML = `
     <div class="panel" style="margin-top:16px">
@@ -1769,6 +1789,7 @@ async function renderTimetable(body, tenantId) {
           <label>Year<select id="tt-year" required>${(years || []).map((y) => `<option value="${y.id}">${esc(y.name)}</option>`).join("")}</select></label>
           <label>Class<select id="tt-class" required>${(classes || []).map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join("")}</select></label>
           <label>Subject<select id="tt-subject" required>${(subjects || []).map((s) => `<option value="${s.id}">${esc(s.name)}</option>`).join("")}</select></label>
+          <label>Teacher<select id="tt-teacher" required>${teacherOpts}</select></label>
           <label>Day<select id="tt-day" required>${DAYS.map((d, i) => `<option value="${i}">${d}</option>`).join("")}</select></label>
           <label>Period<select id="tt-period" required>${periodList.filter((p) => !p.is_break).map((p) => `<option value="${p.id}">${esc(p.name)}</option>`).join("")}</select></label>
           <label>Room<input type="text" name="room" placeholder="Optional"></label>
@@ -1779,13 +1800,12 @@ async function renderTimetable(body, tenantId) {
     area.querySelector("#cancel-slot").onclick = () => { area.innerHTML = ""; };
     area.querySelector("#slot-form").onsubmit = async (e) => {
       e.preventDefault();
-      const { data: userData } = await db.auth.getUser();
       const { error } = await db.from("timetable_slots").insert({
         tenant_id: tenantId,
         academic_year_id: body.querySelector("#tt-year").value,
         class_id: body.querySelector("#tt-class").value,
         subject_id: body.querySelector("#tt-subject").value,
-        teacher_user_id: userData.user.id,
+        teacher_user_id: body.querySelector("#tt-teacher").value,
         period_id: body.querySelector("#tt-period").value,
         day_of_week: parseInt(body.querySelector("#tt-day").value),
         room: e.target.querySelector('[name="room"]').value.trim() || null,
@@ -1943,7 +1963,7 @@ function renderFinInvoices(container, tenantId, invoices, students, categories, 
       msg.innerHTML = `<span class="spinner sm"></span> Creating invoices…`;
       let created = 0;
       for (const s of students) {
-        const { data: existing } = await db.from("fee_invoices").select("id").eq("tenant_id", tenantId).eq("student_id", s.id).eq("status", "pending").maybeSingle();
+        const { data: existing } = await db.from("fee_invoices").select("id").eq("tenant_id", tenantId).eq("student_id", s.id).in("status", ["pending", "overdue", "partial"]).maybeSingle();
         if (existing) continue;
         const { error } = await db.from("fee_invoices").insert({
           tenant_id: tenantId, student_id: s.id, amount: structure.amount, due_date: dueDate,
@@ -1988,7 +2008,12 @@ function openPaymentModal(tenantId, invoiceId, invoiceAmount, onDone) {
       reference_number: fd.get("reference_number") || null, notes: fd.get("notes") || null,
     });
     if (payErr) { msg.textContent = safeError(payErr); return; }
-    await db.from("fee_invoices").update({ status: "paid" }).eq("id", invoiceId);
+    const payAmount = Number(fd.get("amount"));
+    if (payAmount >= invoiceAmount) {
+      await db.from("fee_invoices").update({ status: "paid" }).eq("id", invoiceId);
+    } else {
+      await db.from("fee_invoices").update({ status: "partial" }).eq("id", invoiceId);
+    }
     overlay.remove();
     toast("Payment recorded");
     onDone && onDone();

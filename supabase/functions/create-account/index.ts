@@ -175,72 +175,55 @@ Deno.serve(async (request) => {
     if (input.role === "student") {
       profileTable = "students";
       let admissionNumber = null;
-      const { data: maxAdm, error: maxAdmErr } = await admin
-        .from("students")
-        .select("admission_number")
-        .eq("tenant_id", input.tenant_id)
-        .order("admission_number", { ascending: false })
-        .limit(1);
-      if (maxAdmErr) {
-        if (authUserCreated) await cleanupAuthUser(user.id);
-        return response({ error: "admission_number_query_failed" }, 500, corsHeaders);
-      }
-      const nextNum = maxAdm && maxAdm[0]?.admission_number
-        ? extractNumber(maxAdm[0].admission_number) + 1
-        : 1;
-      admissionNumber = `STU${String(nextNum).padStart(6, "0")}`;
-
-      const { error: profileError } = await admin
-        .from("students")
-        .upsert({
-          id: user.id,
-          email,
-          login_id: loginId,
-          tenant_id: input.tenant_id,
-          admission_number: admissionNumber,
-          first_name: email.split("@")[0],
-          last_name: "",
-          status: "active",
-        }, { onConflict: "id" });
-      if (profileError) {
-        if (authUserCreated) await cleanupAuthUser(user.id);
-        return response({ error: "profile_creation_failed" }, 400, corsHeaders);
+      for (let attempt = 0; attempt < 5; attempt++) {
+        const { data: maxAdm } = await admin
+          .from("students")
+          .select("admission_number")
+          .eq("tenant_id", input.tenant_id)
+          .order("admission_number", { ascending: false })
+          .limit(1);
+        const nextNum = maxAdm && maxAdm[0]?.admission_number
+          ? extractNumber(maxAdm[0].admission_number) + 1 + attempt
+          : 1 + attempt;
+        admissionNumber = `STU${String(nextNum).padStart(6, "0")}`;
+        const { error: profileError } = await admin
+          .from("students")
+          .upsert({
+            id: user.id, email, login_id: loginId, tenant_id: input.tenant_id,
+            admission_number: admissionNumber, first_name: email.split("@")[0], last_name: "", status: "active",
+          }, { onConflict: "id" });
+        if (!profileError) break;
+        if (profileError.code !== "23505") {
+          if (authUserCreated) await cleanupAuthUser(user.id);
+          return response({ error: "profile_creation_failed" }, 400, corsHeaders);
+        }
       }
     } else if (input.role === "teacher") {
       profileTable = "staff_profiles";
       let employeeNumber = null;
-      const { data: maxEmp, error: maxEmpErr } = await admin
-        .from("staff_profiles")
-        .select("employee_number")
-        .eq("tenant_id", input.tenant_id)
-        .order("employee_number", { ascending: false })
-        .limit(1);
-      if (maxEmpErr) {
-        if (authUserCreated) await cleanupAuthUser(user.id);
-        return response({ error: "employee_number_query_failed" }, 500, corsHeaders);
-      }
-      const nextNum = maxEmp && maxEmp[0]?.employee_number
-        ? extractNumber(maxEmp[0].employee_number) + 1
-        : 1;
-      employeeNumber = `TCH${String(nextNum).padStart(6, "0")}`;
-
-      const { error: profileError } = await admin
-        .from("staff_profiles")
-        .upsert({
-          id: user.id,
-          tenant_id: input.tenant_id,
-          user_id: user.id,
-          employee_number: employeeNumber,
-          login_id: loginId,
-          first_name: email.split("@")[0],
-          last_name: "",
-          department: "General",
-          job_title: "Teacher",
-          active: true,
-        }, { onConflict: "id" });
-      if (profileError) {
-        if (authUserCreated) await cleanupAuthUser(user.id);
-        return response({ error: "profile_creation_failed" }, 400, corsHeaders);
+      for (let attempt = 0; attempt < 5; attempt++) {
+        const { data: maxEmp } = await admin
+          .from("staff_profiles")
+          .select("employee_number")
+          .eq("tenant_id", input.tenant_id)
+          .order("employee_number", { ascending: false })
+          .limit(1);
+        const nextNum = maxEmp && maxEmp[0]?.employee_number
+          ? extractNumber(maxEmp[0].employee_number) + 1 + attempt
+          : 1 + attempt;
+        employeeNumber = `TCH${String(nextNum).padStart(6, "0")}`;
+        const { error: profileError } = await admin
+          .from("staff_profiles")
+          .upsert({
+            id: user.id, tenant_id: input.tenant_id, user_id: user.id,
+            employee_number: employeeNumber, login_id: loginId,
+            first_name: email.split("@")[0], last_name: "", department: "General", job_title: "Teacher", active: true,
+          }, { onConflict: "id" });
+        if (!profileError) break;
+        if (profileError.code !== "23505") {
+          if (authUserCreated) await cleanupAuthUser(user.id);
+          return response({ error: "profile_creation_failed" }, 400, corsHeaders);
+        }
       }
     } else if (input.role === "parent") {
       profileTable = "parent_profiles";
